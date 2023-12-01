@@ -1,0 +1,21 @@
+{
+	"canisters":{
+		"ninirust_backend": {
+		  "candid": "src/vfbackend/vfbackend.did",
+		  "package": "vfbackend",
+		  "type": "rust"
+		},
+		"website":{
+			"type": "assets",
+			"source": ["assets"]
+		}
+	},
+	"defaults": {
+	  "build": {
+		"args": "",
+		"packtool": ""
+	  }
+	},
+	"output_env_file": ".env",
+	"version": 1
+}

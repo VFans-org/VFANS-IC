@@ -1,0 +1,3 @@
+service: {
+    "about": () -> (text) query;
+}
