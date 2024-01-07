@@ -8,6 +8,10 @@
 		"website":{
 			"type": "assets",
 			"source": ["assets"]
+		},
+		"demo_http_backend": {
+			"main": "src/mokoto/main.mo",
+			"type": "motoko"
 		}
 	},
 	"defaults": {
