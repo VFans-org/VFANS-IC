@@ -2,13 +2,12 @@ module Types {
 
   public type Timestamp = Nat64;
   
-  //1. Type that describes the Request arguments for an HTTPS outcall
-    //See: https://internetcomputer.org/docs/current/references/ic-interface-spec/#ic-http_request
+    // 定义 httpRequest 对象
     public type HttpRequestArgs = {
-        url : Text;
-        max_response_bytes : ?Nat64;
-        headers : [HttpHeader];
-        body : ?[Nat8];
+        url : Text;// 请求URL 类型 字符串
+        max_response_bytes : ?Nat64;// 最大相应内容   64位自然数
+        headers : [HttpHeader];//请求头
+        body : ?[Nat8];//
         method : HttpMethod;
         transform : ?TransformRawResponseFunction;
     };
