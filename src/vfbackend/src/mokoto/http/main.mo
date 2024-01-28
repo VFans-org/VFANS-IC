@@ -1,4 +1,4 @@
-// import Debug "mo:base/Debug";
+import Debug "mo:base/Debug";
 import Blob "mo:base/Blob";
 import Cycles "mo:base/ExperimentalCycles";
 import Error "mo:base/Error";
@@ -33,7 +33,6 @@ public func counter(input:Nat) : async Nat {
 //PULIC METHOD
 //This method sends a POST request to a URL with a free API we can test.
   public func send_http_post_request() : async Text {
-
     let ic : Types.IC = actor ("aaaaa-aa");
     let host : Text = "l2827e4fsc.execute-api.ap-southeast-1.amazonaws.com";
     let url = "https://l2827e4fsc.execute-api.ap-southeast-1.amazonaws.com/api/vft-query-nodejs"; //HTTP that accepts IPV6

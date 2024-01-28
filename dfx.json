@@ -9,8 +9,8 @@
 			"type": "assets",
 			"source": ["assets"]
 		},
-		"demo_http_backend": {
-			"main": "src/mokoto/http/main.mo",
+		"vft_sync": {
+			"main": "src/mokoto/vft/vft_sync.mo",
 			"type": "motoko"
 		}
 	},
