@@ -1,3 +1,4 @@
+import Text "mo:base/Text";
 module Types {
 
   public type Timestamp = Nat64;
@@ -61,6 +62,20 @@ module Types {
         function : shared query TransformArgs -> async HttpResponsePayload;
         context : Blob;
     };
+
+    public type UserInfo = {
+        user_id : Text;
+        wallet_address : Text;
+        vft:[VFT];
+    };
+    public type VFT = {
+       vft_number: Nat;
+       vft_type: Text;
+    };
+
+
+
+
 
 
     //3. Declaring the IC management canister which we use to make the HTTPS outcall

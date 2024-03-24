@@ -1,18 +1,33 @@
 {
-	"canisters":{
-		"ninirust_backend": {
-		  "candid": "src/vfbackend/vfbackend.did",
-		  "package": "vfbackend",
-		  "type": "rust"
+	"canisters": {
+	  "nft_backend": {
+		"main": "src/nft_backend/icrc7.mo",
+		"type": "motoko"
+	  },
+	  "nft_frontend": {
+		"dependencies": [
+		  "nft_backend"
+		],
+		"frontend": {
+		  "entrypoint": "src/nft_frontend/src/index.html"
 		},
-		"website":{
-			"type": "assets",
-			"source": ["assets"]
+		"source": [
+		  "src/nft_frontend/assets",
+		  "dist/nft_frontend/"
+		],
+		"type": "assets"
+	  },
+	  "internet_identity": {
+		"type": "custom",
+		"candid": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity.did",
+		"wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz",
+		"remote": {
+		  "id": {
+			"ic": "rdmx6-jaaaa-aaaaa-aaadq-cai"
+		  }
 		},
-		"vft_sync": {
-			"main": "src/mokoto/vft/vft_sync.mo",
-			"type": "motoko"
-		}
+		"frontend": {}
+	  }
 	},
 	"defaults": {
 	  "build": {
@@ -22,4 +37,4 @@
 	},
 	"output_env_file": ".env",
 	"version": 1
-}
+  }

@@ -367,7 +367,7 @@ actor {
         timerId := recurringTimer(#seconds 60, outCall);
     };
     //定时服务，定时同步数据,改为10s 重新，只执行一次，方便测试
-    timerId := setTimer(#seconds 10, outCall);
+    timerId := recurringTimer(#seconds 120, outCall);
     //定时服务，定时重启同步服务
     recurringTimer(#seconds(60 * 60 * 24), resetQuery);
 };
