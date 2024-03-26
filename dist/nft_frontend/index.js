@@ -24263,7 +24263,7 @@ document.getElementById("form2").addEventListener("click", async (e) => {
   return false;
 });
 document.getElementById("whoami").addEventListener("click", async (e) => {
-  console.log('aaaaaaa')
+  console.log('aa')
   e.preventDefault();
   // create an auth client
   let authClient = await _dfinity_auth_client__WEBPACK_IMPORTED_MODULE_1__.AuthClient.create();
