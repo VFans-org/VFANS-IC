@@ -85,9 +85,9 @@ function Page() {
                 <div className='btn-box'>
                     <span onClick={onCreate} className='btn'>去创建</span>
                 </div>
-                <div className='btn-box'>
+                {/* <div className='btn-box'>
                     <span onClick={onCreateTest} className='btn'>测试</span>
-                </div>
+                </div> */}
             </div>
         </div>
     );
