@@ -21,7 +21,6 @@ import Json "json";
 import { setTimer; recurringTimer; cancelTimer } = "mo:base/Timer";
 import Error "mo:base/Error";
 import IC "mo:base/ExperimentalInternetComputer";
-import Hash "mo:base/Hash";
 
 
 shared actor class ICRC7NFT(custodian : Principal) = Self {
@@ -75,11 +74,6 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     reputation_point : Text;
     // transferable : Text;
     // mint_time : Text;
-  };
-  public func hash256(input:Text) : async Text {
-      let hash = Hash.sha256(input.bytes());
-      let hashAsNat = Nat.fromBytes(Hash.toHex(hash));
-      return hashAsNat;
   };
   public func query_one_time() : async Text {
     try {
