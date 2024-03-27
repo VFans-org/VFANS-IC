@@ -21,6 +21,8 @@ import Json "json";
 import { setTimer; recurringTimer; cancelTimer } = "mo:base/Timer";
 import Error "mo:base/Error";
 import IC "mo:base/ExperimentalInternetComputer";
+import Hash "mo:base/Hash";
+
 
 shared actor class ICRC7NFT(custodian : Principal) = Self {
 
@@ -74,7 +76,11 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     // transferable : Text;
     // mint_time : Text;
   };
-
+  public func hash256(input:Text) : async Text {
+      let hash = Hash.sha256(input.bytes());
+      let hashAsNat = Nat.fromBytes(Hash.toHex(hash));
+      return hashAsNat;
+  };
   public func query_one_time() : async Text {
     try {
       //构建body
@@ -415,7 +421,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     transformed;
   };
 
-  //==========定时任务
+  //==========定时任务======================================================================
   private func outCall() : async () {
     let start = Time.now();
     if (stop_flag) {
@@ -450,8 +456,8 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     timerId := recurringTimer(#seconds fithSecond, outCall);
   };
 
-  timerId := recurringTimer(#seconds fithSecond, outCall);
-  let a : Nat = recurringTimer(#seconds daySeconds, resetQuery);
+  // timerId := recurringTimer(#seconds fithSecond, outCall);
+  // let a : Nat = recurringTimer(#seconds daySeconds, resetQuery);
 
   // =========================test======================================================================
   public shared func make_test() : async () {

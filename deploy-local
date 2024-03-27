@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ $# -ne 1 ]; then
-    echo "参数错误，请输入 back、frontend 或 all"
+    echo "参数错误，请输入 dfx generate  或 all"
     exit 1
 fi
 
