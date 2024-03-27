@@ -457,8 +457,8 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     timerId := recurringTimer(#seconds fithSecond, outCall);
   };
 
-  timerId := recurringTimer(#seconds fithSecond, outCall);
-  let a : Nat = recurringTimer(#seconds daySeconds, resetQuery);
+  // timerId := recurringTimer(#seconds fithSecond, outCall);
+  // let a : Nat = recurringTimer(#seconds daySeconds, resetQuery);
 
   // =========================test======================================================================
   public shared func make_test() : async () {
