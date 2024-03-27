@@ -42,7 +42,7 @@ function Page() {
     const handleCopyClick = () => {
         try {
             if (pageData.ic_account_id) copy(pageData.ic_account_id)
-            void .show('已复制到剪贴板')
+            // void .show('已复制到剪贴板')
         } catch {
             void Toast.show({
                 content: '复制失败',
