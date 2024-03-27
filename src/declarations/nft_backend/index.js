@@ -10,7 +10,8 @@ export { idlFactory } from "./nft_backend.did.js";
  * beginning in dfx 0.15.0
  */
 export const canisterId =
-  process.env.CANISTER_ID_NFT_BACKEND;
+  process.env.CANISTER_ID_NFT_BACKEND ||
+  process.env.NFT_BACKEND_CANISTER_ID;
 
 export const createActor = (canisterId, options = {}) => {
   const agent = options.agent || new HttpAgent({ ...options.agentOptions });
@@ -39,4 +40,4 @@ export const createActor = (canisterId, options = {}) => {
   });
 };
 
-export const nft_backend = canisterId ? createActor(canisterId) : undefined;
+export const nft_backend = createActor(canisterId);
