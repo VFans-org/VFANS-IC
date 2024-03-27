@@ -1,0 +1,85 @@
+.page-getid {
+    .content {
+        .block-box {
+            margin: 8px 20px 0 20px;
+            display: flex;
+            justify-content: center; 
+
+            flex-shrink: 0;
+            border-radius: 4px;
+            background: #F1E8FC;
+
+            .block {
+                width: 334px;
+                height: 136px;
+                display: flex;
+                justify-content: center;
+
+                flex-direction: column;
+
+                .block-title {
+                    color: rgba(0, 0, 0, 0.85);
+
+                    font-family: "PingFang SC";
+                    font-size: 12px;
+                    font-style: normal;
+                    font-weight: 500;
+                    line-height: 24px;
+                }
+
+                .block-txt {
+                    color: rgba(0, 0, 0, 0.85);
+                    font-family: "PingFang SC";
+                    font-size: 12px;
+                    font-style: normal;
+                    font-weight: 400;
+                    line-height: 24px;
+                }
+            }
+        }
+
+        .link-box {
+            margin-top: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+
+            .link {
+                color: #9145F1;
+                font-family: "PingFang SC";
+                font-size: 12px;
+                font-style: normal;
+                font-weight: 400;
+                line-height: 24px;
+            }
+        }
+
+        .btn-box {
+            margin-top: 16px;
+            padding: 8px 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+
+            .btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 96px;
+                height: 30px;
+                align-items: center;
+                flex-shrink: 0;
+                border-radius: 4px;
+                background: #9354E1;
+                color: var(--VFans-White, #FFF);
+                text-align: center;
+                font-family: "PingFang SC";
+                font-size: 14px;
+                font-style: normal;
+                font-weight: 400;
+                line-height: normal;
+            }
+
+        }
+    }
+}

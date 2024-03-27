@@ -20325,8 +20325,7 @@ __webpack_require__.r(__webpack_exports__);
  * beginning in dfx 0.15.0
  */
 const canisterId =
-  process.env.CANISTER_ID_NFT_BACKEND ||
-  "aax3a-h4aaa-aaaaa-qaahq-cai";
+  process.env.CANISTER_ID_NFT_BACKEND;
 
 const createActor = (canisterId, options = {}) => {
   const agent = options.agent || new _dfinity_agent__WEBPACK_IMPORTED_MODULE_0__.HttpAgent({ ...options.agentOptions });
@@ -20355,7 +20354,7 @@ const createActor = (canisterId, options = {}) => {
   });
 };
 
-const nft_backend = createActor(canisterId);
+const nft_backend = canisterId ? createActor(canisterId) : undefined;
 
 
 /***/ }),
@@ -24270,7 +24269,7 @@ document.getElementById("whoami").addEventListener("click", async (e) => {
   // start the login process and wait for it to finish
   await new Promise((resolve) => {
     authClient.login({
-      identityProvider: "http://ctiya-peaaa-aaaaa-qaaja-cai.localhost:4943/",
+      identityProvider: "http://be2us-64aaa-aaaaa-qaabq-cai.localhost:4943/",
       onSuccess: resolve,
     });
   });
@@ -24279,7 +24278,7 @@ document.getElementById("whoami").addEventListener("click", async (e) => {
   const identity = authClient.getIdentity();
   // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
   const agent = new _dfinity_agent__WEBPACK_IMPORTED_MODULE_2__.HttpAgent({ identity });
-  actor = (0,_declarations_nft_backend__WEBPACK_IMPORTED_MODULE_0__.createActor)("aax3a-h4aaa-aaaaa-qaahq-cai", {
+  actor = (0,_declarations_nft_backend__WEBPACK_IMPORTED_MODULE_0__.createActor)("bkyz2-fmaaa-aaaaa-qaaaq-cai", {
     agent,
   });
   // Using the interface description of our webapp, we create an actor that we use to call the service methods.
