@@ -125,6 +125,8 @@ class Actor {
                     compute_allocation: settings.compute_allocation ? [settings.compute_allocation] : [],
                     freezing_threshold: settings.freezing_threshold ? [settings.freezing_threshold] : [],
                     memory_allocation: settings.memory_allocation ? [settings.memory_allocation] : [],
+                    reserved_cycles_limit: [],
+                    log_visibility: [],
                 },
             ];
         }
@@ -202,7 +204,11 @@ function _createActorMethod(actor, methodName, func, blsVerify) {
             const agent = options.agent || actor[metadataSymbol].config.agent || (0,_agent__WEBPACK_IMPORTED_MODULE_1__.getDefaultAgent)();
             const cid = _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.from(options.canisterId || actor[metadataSymbol].config.canisterId);
             const arg = _dfinity_candid__WEBPACK_IMPORTED_MODULE_3__.IDL.encode(func.argTypes, args);
-            const result = await agent.query(cid, { methodName, arg });
+            const result = await agent.query(cid, {
+                methodName,
+                arg,
+                effectiveCanisterId: options.effectiveCanisterId,
+            });
             switch (result.status) {
                 case "rejected" /* QueryResponseStatus.Rejected */:
                     throw new QueryCallRejectedError(cid, methodName, result);
@@ -269,6 +275,9 @@ function _createActorMethod(actor, methodName, func, blsVerify) {
  */
 function getManagementCanister(config) {
     function transform(_methodName, args) {
+        if (config.effectiveCanisterId) {
+            return { effectiveCanisterId: _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.from(config.effectiveCanisterId) };
+        }
         const first = args[0];
         let effectiveCanisterId = _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.fromHex('');
         if (first && typeof first === 'object' && first.canister_id) {
@@ -348,7 +357,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   Expiry: () => (/* reexport safe */ _transforms__WEBPACK_IMPORTED_MODULE_6__.Expiry),
 /* harmony export */   HttpAgent: () => (/* binding */ HttpAgent),
+/* harmony export */   IC_ROOT_KEY: () => (/* binding */ IC_ROOT_KEY),
 /* harmony export */   IdentityInvalidError: () => (/* binding */ IdentityInvalidError),
+/* harmony export */   MANAGEMENT_CANISTER_ID: () => (/* binding */ MANAGEMENT_CANISTER_ID),
 /* harmony export */   RequestStatusResponseStatus: () => (/* binding */ RequestStatusResponseStatus),
 /* harmony export */   httpHeadersTransform: () => (/* reexport safe */ _transforms__WEBPACK_IMPORTED_MODULE_6__.httpHeadersTransform),
 /* harmony export */   makeExpiryTransform: () => (/* reexport safe */ _transforms__WEBPACK_IMPORTED_MODULE_6__.makeExpiryTransform),
@@ -366,10 +377,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _errors__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./errors */ "./node_modules/@dfinity/agent/lib/esm/agent/http/errors.js");
 /* harmony import */ var _canisterStatus__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ../../canisterStatus */ "./node_modules/@dfinity/agent/lib/esm/canisterStatus/index.js");
 /* harmony import */ var _certificate__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ../../certificate */ "./node_modules/@dfinity/agent/lib/esm/certificate.js");
-/* harmony import */ var _noble_curves_ed25519__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(/*! @noble/curves/ed25519 */ "./node_modules/@noble/curves/esm/ed25519.js");
+/* harmony import */ var _noble_curves_ed25519__WEBPACK_IMPORTED_MODULE_15__ = __webpack_require__(/*! @noble/curves/ed25519 */ "./node_modules/@noble/curves/esm/ed25519.js");
 /* harmony import */ var _utils_expirableMap__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ../../utils/expirableMap */ "./node_modules/@dfinity/agent/lib/esm/utils/expirableMap.js");
 /* harmony import */ var _public_key__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! ../../public_key */ "./node_modules/@dfinity/agent/lib/esm/public_key.js");
-/* harmony import */ var _observable__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(/*! ../../observable */ "./node_modules/@dfinity/agent/lib/esm/observable.js");
+/* harmony import */ var _utils_leb__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(/*! ../../utils/leb */ "./node_modules/@dfinity/agent/lib/esm/utils/leb.js");
+/* harmony import */ var _observable__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(/*! ../../observable */ "./node_modules/@dfinity/agent/lib/esm/observable.js");
 var __classPrivateFieldSet = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
     if (kind === "m") throw new TypeError("Private method is not writable");
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
@@ -381,7 +393,8 @@ var __classPrivateFieldGet = (undefined && undefined.__classPrivateFieldGet) || 
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
-var _HttpAgent_queryPipeline, _HttpAgent_updatePipeline, _HttpAgent_subnetKeys, _HttpAgent_verifyQuerySignatures, _HttpAgent_verifyQueryResponse;
+var _HttpAgent_instances, _HttpAgent_waterMark, _HttpAgent_queryPipeline, _HttpAgent_updatePipeline, _HttpAgent_subnetKeys, _HttpAgent_verifyQuerySignatures, _HttpAgent_requestAndRetryQuery, _HttpAgent_verifyQueryResponse;
+
 
 
 
@@ -415,6 +428,7 @@ const IC_ROOT_KEY = '308182301d060d2b0601040182dc7c0503010201060c2b0601040182dc7
     'c0e6ec71fab583b08bd81373c255c3c371b2e84863c98a4f1e08b74235d14fb5d9c0cd546d968' +
     '5f913a0c0b2cc5341583bf4b4392e467db96d65b9bb4cb717112f8472e0d5a4d14505ffd7484' +
     'b01291091c5f87b98883463f98091a0baaae';
+const MANAGEMENT_CANISTER_ID = 'aaaaa-aa';
 // IC0 domain info
 const IC0_DOMAIN = 'ic0.app';
 const IC0_SUB_DOMAIN = '.ic0.app';
@@ -475,11 +489,15 @@ function getDefaultFetch() {
 // allowing extensions.
 class HttpAgent {
     constructor(options = {}) {
+        var _a;
+        _HttpAgent_instances.add(this);
         this.rootKey = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_5__.fromHex)(IC_ROOT_KEY);
         this._timeDiffMsecs = 0;
         this._rootKeyFetched = false;
         this._isAgent = true;
-        this.log = new _observable__WEBPACK_IMPORTED_MODULE_13__.ObservableLog();
+        // The UTC time in milliseconds when the latest request was made
+        _HttpAgent_waterMark.set(this, 0);
+        this.log = new _observable__WEBPACK_IMPORTED_MODULE_14__.ObservableLog();
         _HttpAgent_queryPipeline.set(this, []);
         _HttpAgent_updatePipeline.set(this, []);
         _HttpAgent_subnetKeys.set(this, new _utils_expirableMap__WEBPACK_IMPORTED_MODULE_11__.ExpirableMap({
@@ -537,7 +555,7 @@ class HttpAgent {
                     throw new _certificate__WEBPACK_IMPORTED_MODULE_10__.CertificateVerificationError('Invalid signature from replica signed query: no matching node key found.');
                 }
                 const rawKey = _public_key__WEBPACK_IMPORTED_MODULE_12__.Ed25519PublicKey.fromDer(pubKey).rawKey;
-                const valid = _noble_curves_ed25519__WEBPACK_IMPORTED_MODULE_14__.ed25519.verify(sig.signature, new Uint8Array(separatorWithHash), new Uint8Array(rawKey));
+                const valid = _noble_curves_ed25519__WEBPACK_IMPORTED_MODULE_15__.ed25519.verify(sig.signature, new Uint8Array(separatorWithHash), new Uint8Array(rawKey));
                 if (valid)
                     return queryResponse;
                 throw new _certificate__WEBPACK_IMPORTED_MODULE_10__.CertificateVerificationError(`Invalid signature from replica ${nodeId} signed query.`);
@@ -595,15 +613,14 @@ class HttpAgent {
             }
             else {
                 this._host = new URL('https://icp-api.io');
-                console.warn('Could not infer host from window.location, defaulting to mainnet gateway of https://icp-api.io. Please provide a host to the HttpAgent constructor to avoid this warning.');
+                this.log.warn('Could not infer host from window.location, defaulting to mainnet gateway of https://icp-api.io. Please provide a host to the HttpAgent constructor to avoid this warning.');
             }
         }
         if (options.verifyQuerySignatures !== undefined) {
             __classPrivateFieldSet(this, _HttpAgent_verifyQuerySignatures, options.verifyQuerySignatures, "f");
         }
-        // Default is 3, only set from option if greater or equal to 0
-        this._retryTimes =
-            options.retryTimes !== undefined && options.retryTimes >= 0 ? options.retryTimes : 3;
+        // Default is 3
+        this._retryTimes = (_a = options.retryTimes) !== null && _a !== void 0 ? _a : 3;
         // Rewrite to avoid redirects
         if (this._host.hostname.endsWith(IC0_SUB_DOMAIN)) {
             this._host.hostname = IC0_DOMAIN;
@@ -637,6 +654,9 @@ class HttpAgent {
                 }
             });
         }
+    }
+    get waterMark() {
+        return __classPrivateFieldGet(this, _HttpAgent_waterMark, "f");
     }
     isLocal() {
         const hostname = this._host.hostname;
@@ -696,6 +716,7 @@ class HttpAgent {
         // Apply transform for identity.
         transformedRequest = await id.transformRequest(transformedRequest);
         const body = _cbor__WEBPACK_IMPORTED_MODULE_3__.encode(transformedRequest.body);
+        this.log(`fetching "/api/v2/canister/${ecid.toText()}/call" with request:`, transformedRequest);
         // Run both in parallel. The fetch is quite expensive, so we have plenty of time to
         // calculate the requestId locally.
         const request = this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/canister/${ecid.toText()}/call`, this._host), Object.assign(Object.assign(Object.assign({}, this._callOptions), transformedRequest.request), { body })));
@@ -720,7 +741,7 @@ class HttpAgent {
         }
         catch (error) {
             if (this._retryTimes > tries) {
-                console.warn(`Caught exception while attempting to make request:\n` +
+                this.log.warn(`Caught exception while attempting to make request:\n` +
                     `  ${error}\n` +
                     `  Retrying request.`);
                 return await this._requestAndRetry(request, tries + 1);
@@ -735,7 +756,7 @@ class HttpAgent {
             `  Code: ${response.status} (${response.statusText})\n` +
             `  Body: ${responseText}\n`;
         if (this._retryTimes > tries) {
-            console.warn(errorMessage + `  Retrying request.`);
+            this.log.warn(errorMessage + `  Retrying request.`);
             return await this._requestAndRetry(request, tries + 1);
         }
         throw new _errors__WEBPACK_IMPORTED_MODULE_8__.AgentHTTPResponseError(errorMessage, {
@@ -746,6 +767,11 @@ class HttpAgent {
         });
     }
     async query(canisterId, fields, identity) {
+        const ecid = fields.effectiveCanisterId
+            ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.from(fields.effectiveCanisterId)
+            : _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.from(canisterId);
+        this.log(`ecid ${ecid.toString()}`);
+        this.log(`canisterId ${canisterId.toString()}`);
         const makeQuery = async () => {
             const id = await (identity !== undefined ? await identity : await this._identity);
             if (!id) {
@@ -773,30 +799,33 @@ class HttpAgent {
                 body: request,
             });
             // Apply transform for identity.
-            transformedRequest = await (id === null || id === void 0 ? void 0 : id.transformRequest(transformedRequest));
+            transformedRequest = (await (id === null || id === void 0 ? void 0 : id.transformRequest(transformedRequest)));
             const body = _cbor__WEBPACK_IMPORTED_MODULE_3__.encode(transformedRequest.body);
-            const response = await this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/canister/${canister.toText()}/query`, this._host), Object.assign(Object.assign(Object.assign({}, this._fetchOptions), transformedRequest.request), { body })));
-            const queryResponse = _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await response.arrayBuffer());
-            return Object.assign(Object.assign({}, queryResponse), { httpDetails: {
-                    ok: response.ok,
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: (0,_transforms__WEBPACK_IMPORTED_MODULE_6__.httpHeadersTransform)(response.headers),
-                }, requestId });
+            const args = {
+                canister: canister.toText(),
+                ecid,
+                transformedRequest,
+                body,
+                requestId,
+            };
+            return await __classPrivateFieldGet(this, _HttpAgent_instances, "m", _HttpAgent_requestAndRetryQuery).call(this, args);
         };
         const getSubnetStatus = async () => {
             if (!__classPrivateFieldGet(this, _HttpAgent_verifyQuerySignatures, "f")) {
                 return undefined;
             }
-            const subnetStatus = __classPrivateFieldGet(this, _HttpAgent_subnetKeys, "f").get(canisterId.toString());
+            const subnetStatus = __classPrivateFieldGet(this, _HttpAgent_subnetKeys, "f").get(ecid.toString());
             if (subnetStatus) {
                 return subnetStatus;
             }
-            await this.fetchSubnetKeys(canisterId.toString());
-            return __classPrivateFieldGet(this, _HttpAgent_subnetKeys, "f").get(canisterId.toString());
+            await this.fetchSubnetKeys(ecid.toString());
+            return __classPrivateFieldGet(this, _HttpAgent_subnetKeys, "f").get(ecid.toString());
         };
+        // Attempt to make the query i=retryTimes times
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         // Make query and fetch subnet keys in parallel
         const [query, subnetStatus] = await Promise.all([makeQuery(), getSubnetStatus()]);
+        this.log('Query response:', query);
         // Skip verification if the user has disabled it
         if (!__classPrivateFieldGet(this, _HttpAgent_verifyQuerySignatures, "f")) {
             return query;
@@ -806,9 +835,9 @@ class HttpAgent {
         }
         catch (_) {
             // In case the node signatures have changed, refresh the subnet keys and try again
-            console.warn('Query response verification failed. Retrying with fresh subnet keys.');
+            this.log.warn('Query response verification failed. Retrying with fresh subnet keys.');
             __classPrivateFieldGet(this, _HttpAgent_subnetKeys, "f").delete(canisterId.toString());
-            await this.fetchSubnetKeys(canisterId.toString());
+            await this.fetchSubnetKeys(ecid.toString());
             const updatedSubnetStatus = __classPrivateFieldGet(this, _HttpAgent_subnetKeys, "f").get(canisterId.toString());
             if (!updatedSubnetStatus) {
                 throw new _certificate__WEBPACK_IMPORTED_MODULE_10__.CertificateVerificationError('Invalid signature from replica signed query: no matching node key found.');
@@ -846,6 +875,7 @@ class HttpAgent {
         const canister = typeof canisterId === 'string' ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.fromText(canisterId) : canisterId;
         const transformedRequest = request !== null && request !== void 0 ? request : (await this.createReadStateRequest(fields, identity));
         const body = _cbor__WEBPACK_IMPORTED_MODULE_3__.encode(transformedRequest.body);
+        this.log(`fetching "/api/v2/canister/${canister}/read_state" with request:`, transformedRequest);
         // TODO - https://dfinity.atlassian.net/browse/SDK-1092
         const response = await this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/canister/${canister}/read_state`, this._host), Object.assign(Object.assign(Object.assign({}, this._fetchOptions), transformedRequest.request), { body })));
         if (!response.ok) {
@@ -853,7 +883,41 @@ class HttpAgent {
                 `  Code: ${response.status} (${response.statusText})\n` +
                 `  Body: ${await response.text()}\n`);
         }
-        return _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await response.arrayBuffer());
+        const decodedResponse = _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await response.arrayBuffer());
+        this.log('Read state response:', decodedResponse);
+        const parsedTime = await this.parseTimeFromResponse(decodedResponse);
+        if (parsedTime > 0) {
+            this.log('Read state response time:', parsedTime);
+            __classPrivateFieldSet(this, _HttpAgent_waterMark, parsedTime, "f");
+        }
+        return decodedResponse;
+    }
+    async parseTimeFromResponse(response) {
+        let tree;
+        if (response.certificate) {
+            const decoded = _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(response.certificate);
+            if (decoded && 'tree' in decoded) {
+                tree = decoded.tree;
+            }
+            else {
+                throw new Error('Could not decode time from response');
+            }
+            const timeLookup = (0,_certificate__WEBPACK_IMPORTED_MODULE_10__.lookup_path)(['time'], tree);
+            if (!timeLookup) {
+                throw new Error('Time was not found in the response or was not in its expected format.');
+            }
+            if (!(timeLookup instanceof ArrayBuffer) && !ArrayBuffer.isView(timeLookup)) {
+                throw new Error('Time was not found in the response or was not in its expected format.');
+            }
+            const date = (0,_utils_leb__WEBPACK_IMPORTED_MODULE_13__.decodeTime)((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_5__.bufFromBufLike)(timeLookup));
+            this.log('Time from response:', date);
+            this.log('Time from response in milliseconds:', Number(date));
+            return Number(date);
+        }
+        else {
+            this.log.warn('No certificate found in response');
+        }
+        return 0;
     }
     /**
      * Allows agent to sync its time with the network. Can be called during intialization or mid-lifecycle if the device's clock has drifted away from the network time. This is necessary to set the Expiry for a request
@@ -887,6 +951,7 @@ class HttpAgent {
                 Authorization: 'Basic ' + btoa(this._credentials),
             }
             : {};
+        this.log(`fetching "/api/v2/status"`);
         const response = await this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/status`, this._host), Object.assign({ headers }, this._fetchOptions)));
         return _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await response.arrayBuffer());
     }
@@ -934,7 +999,72 @@ class HttpAgent {
         return p;
     }
 }
-_HttpAgent_queryPipeline = new WeakMap(), _HttpAgent_updatePipeline = new WeakMap(), _HttpAgent_subnetKeys = new WeakMap(), _HttpAgent_verifyQuerySignatures = new WeakMap(), _HttpAgent_verifyQueryResponse = new WeakMap();
+_HttpAgent_waterMark = new WeakMap(), _HttpAgent_queryPipeline = new WeakMap(), _HttpAgent_updatePipeline = new WeakMap(), _HttpAgent_subnetKeys = new WeakMap(), _HttpAgent_verifyQuerySignatures = new WeakMap(), _HttpAgent_verifyQueryResponse = new WeakMap(), _HttpAgent_instances = new WeakSet(), _HttpAgent_requestAndRetryQuery = async function _HttpAgent_requestAndRetryQuery(args, tries = 0) {
+    var _a, _b;
+    const { ecid, transformedRequest, body, requestId } = args;
+    let response;
+    // Make the request and retry if it throws an error
+    try {
+        const fetchResponse = await this._fetch('' + new URL(`/api/v2/canister/${ecid.toString()}/query`, this._host), Object.assign(Object.assign(Object.assign({}, this._fetchOptions), transformedRequest.request), { body }));
+        if (fetchResponse.status === 200) {
+            const queryResponse = _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await fetchResponse.arrayBuffer());
+            response = Object.assign(Object.assign({}, queryResponse), { httpDetails: {
+                    ok: fetchResponse.ok,
+                    status: fetchResponse.status,
+                    statusText: fetchResponse.statusText,
+                    headers: (0,_transforms__WEBPACK_IMPORTED_MODULE_6__.httpHeadersTransform)(fetchResponse.headers),
+                }, requestId });
+        }
+        else {
+            throw new _errors__WEBPACK_IMPORTED_MODULE_8__.AgentHTTPResponseError(`Server returned an error:\n` +
+                `  Code: ${fetchResponse.status} (${fetchResponse.statusText})\n` +
+                `  Body: ${await fetchResponse.text()}\n`, {
+                ok: fetchResponse.ok,
+                status: fetchResponse.status,
+                statusText: fetchResponse.statusText,
+                headers: (0,_transforms__WEBPACK_IMPORTED_MODULE_6__.httpHeadersTransform)(fetchResponse.headers),
+            });
+        }
+    }
+    catch (error) {
+        if (tries < this._retryTimes) {
+            this.log.warn(`Caught exception while attempting to make query:\n` +
+                `  ${error}\n` +
+                `  Retrying query.`);
+            return await __classPrivateFieldGet(this, _HttpAgent_instances, "m", _HttpAgent_requestAndRetryQuery).call(this, args, tries + 1);
+        }
+        throw error;
+    }
+    const timestamp = (_b = (_a = response.signatures) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.timestamp;
+    // Skip watermark verification if the user has set verifyQuerySignatures to false
+    if (!__classPrivateFieldGet(this, _HttpAgent_verifyQuerySignatures, "f")) {
+        return response;
+    }
+    if (!timestamp) {
+        throw new Error('Timestamp not found in query response. This suggests a malformed or malicious response.');
+    }
+    // Convert the timestamp to milliseconds
+    const timeStampInMs = Number(BigInt(timestamp) / BigInt(1000000));
+    this.log('watermark and timestamp', {
+        waterMark: this.waterMark,
+        timestamp: timeStampInMs,
+    });
+    // If the timestamp is less than the watermark, retry the request up to the retry limit
+    if (Number(this.waterMark) > timeStampInMs) {
+        const error = new _errors__WEBPACK_IMPORTED_MODULE_1__.AgentError('Timestamp is below the watermark. Retrying query.');
+        this.log.error('Timestamp is below', error, {
+            timestamp,
+            waterMark: this.waterMark,
+        });
+        if (tries < this._retryTimes) {
+            return await __classPrivateFieldGet(this, _HttpAgent_instances, "m", _HttpAgent_requestAndRetryQuery).call(this, args, tries + 1);
+        }
+        {
+            throw new _errors__WEBPACK_IMPORTED_MODULE_1__.AgentError(`Timestamp failed to pass the watermark after retrying the configured ${this._retryTimes} times. We cannot guarantee the integrity of the response since it could be a replay attack.`);
+        }
+    }
+    return response;
+};
 //# sourceMappingURL=index.js.map
 
 /***/ }),
@@ -1079,7 +1209,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   AgentHTTPResponseError: () => (/* reexport safe */ _http_errors__WEBPACK_IMPORTED_MODULE_2__.AgentHTTPResponseError),
 /* harmony export */   Expiry: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.Expiry),
 /* harmony export */   HttpAgent: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.HttpAgent),
+/* harmony export */   IC_ROOT_KEY: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.IC_ROOT_KEY),
 /* harmony export */   IdentityInvalidError: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.IdentityInvalidError),
+/* harmony export */   MANAGEMENT_CANISTER_ID: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.MANAGEMENT_CANISTER_ID),
 /* harmony export */   ProxyAgent: () => (/* reexport safe */ _proxy__WEBPACK_IMPORTED_MODULE_3__.ProxyAgent),
 /* harmony export */   ProxyMessageKind: () => (/* reexport safe */ _proxy__WEBPACK_IMPORTED_MODULE_3__.ProxyMessageKind),
 /* harmony export */   ProxyStubAgent: () => (/* reexport safe */ _proxy__WEBPACK_IMPORTED_MODULE_3__.ProxyStubAgent),
@@ -1728,17 +1860,25 @@ __webpack_require__.r(__webpack_exports__);
         testnet: IDL.Null,
     });
     const bitcoin_address = IDL.Text;
-    const get_balance_request = IDL.Record({
+    const bitcoin_get_balance_args = IDL.Record({
         network: bitcoin_network,
         address: bitcoin_address,
         min_confirmations: IDL.Opt(IDL.Nat32),
     });
     const satoshi = IDL.Nat64;
-    const get_current_fee_percentiles_request = IDL.Record({
+    const bitcoin_get_balance_result = satoshi;
+    const bitcoin_get_balance_query_args = IDL.Record({
+        network: bitcoin_network,
+        address: bitcoin_address,
+        min_confirmations: IDL.Opt(IDL.Nat32),
+    });
+    const bitcoin_get_balance_query_result = satoshi;
+    const bitcoin_get_current_fee_percentiles_args = IDL.Record({
         network: bitcoin_network,
     });
     const millisatoshi_per_byte = IDL.Nat64;
-    const get_utxos_request = IDL.Record({
+    const bitcoin_get_current_fee_percentiles_result = IDL.Vec(millisatoshi_per_byte);
+    const bitcoin_get_utxos_args = IDL.Record({
         network: bitcoin_network,
         filter: IDL.Opt(IDL.Variant({
             page: IDL.Vec(IDL.Nat8),
@@ -1756,17 +1896,35 @@ __webpack_require__.r(__webpack_exports__);
         value: satoshi,
         outpoint: outpoint,
     });
-    const get_utxos_response = IDL.Record({
+    const bitcoin_get_utxos_result = IDL.Record({
         next_page: IDL.Opt(IDL.Vec(IDL.Nat8)),
         tip_height: IDL.Nat32,
         tip_block_hash: block_hash,
         utxos: IDL.Vec(utxo),
     });
-    const send_transaction_request = IDL.Record({
+    const bitcoin_get_utxos_query_args = IDL.Record({
+        network: bitcoin_network,
+        filter: IDL.Opt(IDL.Variant({
+            page: IDL.Vec(IDL.Nat8),
+            min_confirmations: IDL.Nat32,
+        })),
+        address: bitcoin_address,
+    });
+    const bitcoin_get_utxos_query_result = IDL.Record({
+        next_page: IDL.Opt(IDL.Vec(IDL.Nat8)),
+        tip_height: IDL.Nat32,
+        tip_block_hash: block_hash,
+        utxos: IDL.Vec(utxo),
+    });
+    const bitcoin_send_transaction_args = IDL.Record({
         transaction: IDL.Vec(IDL.Nat8),
         network: bitcoin_network,
     });
     const canister_id = IDL.Principal;
+    const canister_info_args = IDL.Record({
+        canister_id: canister_id,
+        num_requested_changes: IDL.Opt(IDL.Nat64),
+    });
     const change_origin = IDL.Variant({
         from_user: IDL.Record({ user_id: IDL.Principal }),
         from_canister: IDL.Record({
@@ -1795,187 +1953,207 @@ __webpack_require__.r(__webpack_exports__);
         origin: change_origin,
         details: change_details,
     });
+    const canister_info_result = IDL.Record({
+        controllers: IDL.Vec(IDL.Principal),
+        module_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
+        recent_changes: IDL.Vec(change),
+        total_num_changes: IDL.Nat64,
+    });
+    const canister_status_args = IDL.Record({ canister_id: canister_id });
+    const log_visibility = IDL.Variant({
+        controllers: IDL.Null,
+        public: IDL.Null,
+    });
     const definite_canister_settings = IDL.Record({
         freezing_threshold: IDL.Nat,
         controllers: IDL.Vec(IDL.Principal),
+        reserved_cycles_limit: IDL.Nat,
+        log_visibility: log_visibility,
         memory_allocation: IDL.Nat,
         compute_allocation: IDL.Nat,
     });
+    const canister_status_result = IDL.Record({
+        status: IDL.Variant({
+            stopped: IDL.Null,
+            stopping: IDL.Null,
+            running: IDL.Null,
+        }),
+        memory_size: IDL.Nat,
+        cycles: IDL.Nat,
+        settings: definite_canister_settings,
+        idle_cycles_burned_per_day: IDL.Nat,
+        module_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
+        reserved_cycles: IDL.Nat,
+    });
+    const clear_chunk_store_args = IDL.Record({ canister_id: canister_id });
     const canister_settings = IDL.Record({
         freezing_threshold: IDL.Opt(IDL.Nat),
         controllers: IDL.Opt(IDL.Vec(IDL.Principal)),
+        reserved_cycles_limit: IDL.Opt(IDL.Nat),
+        log_visibility: IDL.Opt(log_visibility),
         memory_allocation: IDL.Opt(IDL.Nat),
         compute_allocation: IDL.Opt(IDL.Nat),
     });
+    const create_canister_args = IDL.Record({
+        settings: IDL.Opt(canister_settings),
+        sender_canister_version: IDL.Opt(IDL.Nat64),
+    });
+    const create_canister_result = IDL.Record({ canister_id: canister_id });
+    const delete_canister_args = IDL.Record({ canister_id: canister_id });
+    const deposit_cycles_args = IDL.Record({ canister_id: canister_id });
     const ecdsa_curve = IDL.Variant({ secp256k1: IDL.Null });
+    const ecdsa_public_key_args = IDL.Record({
+        key_id: IDL.Record({ name: IDL.Text, curve: ecdsa_curve }),
+        canister_id: IDL.Opt(canister_id),
+        derivation_path: IDL.Vec(IDL.Vec(IDL.Nat8)),
+    });
+    const ecdsa_public_key_result = IDL.Record({
+        public_key: IDL.Vec(IDL.Nat8),
+        chain_code: IDL.Vec(IDL.Nat8),
+    });
+    const fetch_canister_logs_args = IDL.Record({ canister_id: canister_id });
+    const canister_log_record = IDL.Record({
+        idx: IDL.Nat64,
+        timestamp_nanos: IDL.Nat64,
+        content: IDL.Vec(IDL.Nat8),
+    });
+    const fetch_canister_logs_result = IDL.Record({
+        canister_log_records: IDL.Vec(canister_log_record),
+    });
     const http_header = IDL.Record({ value: IDL.Text, name: IDL.Text });
-    const http_response = IDL.Record({
+    const http_request_result = IDL.Record({
         status: IDL.Nat,
         body: IDL.Vec(IDL.Nat8),
         headers: IDL.Vec(http_header),
     });
+    const http_request_args = IDL.Record({
+        url: IDL.Text,
+        method: IDL.Variant({
+            get: IDL.Null,
+            head: IDL.Null,
+            post: IDL.Null,
+        }),
+        max_response_bytes: IDL.Opt(IDL.Nat64),
+        body: IDL.Opt(IDL.Vec(IDL.Nat8)),
+        transform: IDL.Opt(IDL.Record({
+            function: IDL.Func([
+                IDL.Record({
+                    context: IDL.Vec(IDL.Nat8),
+                    response: http_request_result,
+                }),
+            ], [http_request_result], ['query']),
+            context: IDL.Vec(IDL.Nat8),
+        })),
+        headers: IDL.Vec(http_header),
+    });
     const chunk_hash = IDL.Vec(IDL.Nat8);
+    const install_chunked_code_args = IDL.Record({
+        arg: IDL.Vec(IDL.Nat8),
+        wasm_module_hash: IDL.Vec(IDL.Nat8),
+        mode: IDL.Variant({
+            reinstall: IDL.Null,
+            upgrade: IDL.Opt(IDL.Record({ skip_pre_upgrade: IDL.Opt(IDL.Bool) })),
+            install: IDL.Null,
+        }),
+        chunk_hashes_list: IDL.Vec(chunk_hash),
+        target_canister: canister_id,
+        sender_canister_version: IDL.Opt(IDL.Nat64),
+        storage_canister: IDL.Opt(canister_id),
+    });
     const wasm_module = IDL.Vec(IDL.Nat8);
+    const install_code_args = IDL.Record({
+        arg: IDL.Vec(IDL.Nat8),
+        wasm_module: wasm_module,
+        mode: IDL.Variant({
+            reinstall: IDL.Null,
+            upgrade: IDL.Opt(IDL.Record({ skip_pre_upgrade: IDL.Opt(IDL.Bool) })),
+            install: IDL.Null,
+        }),
+        canister_id: canister_id,
+        sender_canister_version: IDL.Opt(IDL.Nat64),
+    });
+    const node_metrics_history_args = IDL.Record({
+        start_at_timestamp_nanos: IDL.Nat64,
+        subnet_id: IDL.Principal,
+    });
     const node_metrics = IDL.Record({
         num_block_failures_total: IDL.Nat64,
         node_id: IDL.Principal,
         num_blocks_total: IDL.Nat64,
     });
+    const node_metrics_history_result = IDL.Vec(IDL.Record({
+        timestamp_nanos: IDL.Nat64,
+        node_metrics: IDL.Vec(node_metrics),
+    }));
+    const provisional_create_canister_with_cycles_args = IDL.Record({
+        settings: IDL.Opt(canister_settings),
+        specified_id: IDL.Opt(canister_id),
+        amount: IDL.Opt(IDL.Nat),
+        sender_canister_version: IDL.Opt(IDL.Nat64),
+    });
+    const provisional_create_canister_with_cycles_result = IDL.Record({
+        canister_id: canister_id,
+    });
+    const provisional_top_up_canister_args = IDL.Record({
+        canister_id: canister_id,
+        amount: IDL.Nat,
+    });
+    const raw_rand_result = IDL.Vec(IDL.Nat8);
+    const sign_with_ecdsa_args = IDL.Record({
+        key_id: IDL.Record({ name: IDL.Text, curve: ecdsa_curve }),
+        derivation_path: IDL.Vec(IDL.Vec(IDL.Nat8)),
+        message_hash: IDL.Vec(IDL.Nat8),
+    });
+    const sign_with_ecdsa_result = IDL.Record({
+        signature: IDL.Vec(IDL.Nat8),
+    });
+    const start_canister_args = IDL.Record({ canister_id: canister_id });
+    const stop_canister_args = IDL.Record({ canister_id: canister_id });
+    const stored_chunks_args = IDL.Record({ canister_id: canister_id });
+    const stored_chunks_result = IDL.Vec(chunk_hash);
+    const uninstall_code_args = IDL.Record({
+        canister_id: canister_id,
+        sender_canister_version: IDL.Opt(IDL.Nat64),
+    });
+    const update_settings_args = IDL.Record({
+        canister_id: IDL.Principal,
+        settings: canister_settings,
+        sender_canister_version: IDL.Opt(IDL.Nat64),
+    });
+    const upload_chunk_args = IDL.Record({
+        chunk: IDL.Vec(IDL.Nat8),
+        canister_id: IDL.Principal,
+    });
+    const upload_chunk_result = chunk_hash;
     return IDL.Service({
-        bitcoin_get_balance: IDL.Func([get_balance_request], [satoshi], []),
-        bitcoin_get_balance_query: IDL.Func([get_balance_request], [satoshi], ['query']),
-        bitcoin_get_current_fee_percentiles: IDL.Func([get_current_fee_percentiles_request], [IDL.Vec(millisatoshi_per_byte)], []),
-        bitcoin_get_utxos: IDL.Func([get_utxos_request], [get_utxos_response], []),
-        bitcoin_get_utxos_query: IDL.Func([get_utxos_request], [get_utxos_response], ['query']),
-        bitcoin_send_transaction: IDL.Func([send_transaction_request], [], []),
-        canister_info: IDL.Func([
-            IDL.Record({
-                canister_id: canister_id,
-                num_requested_changes: IDL.Opt(IDL.Nat64),
-            }),
-        ], [
-            IDL.Record({
-                controllers: IDL.Vec(IDL.Principal),
-                module_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
-                recent_changes: IDL.Vec(change),
-                total_num_changes: IDL.Nat64,
-            }),
-        ], []),
-        canister_status: IDL.Func([IDL.Record({ canister_id: canister_id })], [
-            IDL.Record({
-                status: IDL.Variant({
-                    stopped: IDL.Null,
-                    stopping: IDL.Null,
-                    running: IDL.Null,
-                }),
-                memory_size: IDL.Nat,
-                cycles: IDL.Nat,
-                settings: definite_canister_settings,
-                idle_cycles_burned_per_day: IDL.Nat,
-                module_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
-            }),
-        ], []),
-        clear_chunk_store: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
-        create_canister: IDL.Func([
-            IDL.Record({
-                settings: IDL.Opt(canister_settings),
-                sender_canister_version: IDL.Opt(IDL.Nat64),
-            }),
-        ], [IDL.Record({ canister_id: canister_id })], []),
-        delete_canister: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
-        deposit_cycles: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
-        ecdsa_public_key: IDL.Func([
-            IDL.Record({
-                key_id: IDL.Record({ name: IDL.Text, curve: ecdsa_curve }),
-                canister_id: IDL.Opt(canister_id),
-                derivation_path: IDL.Vec(IDL.Vec(IDL.Nat8)),
-            }),
-        ], [
-            IDL.Record({
-                public_key: IDL.Vec(IDL.Nat8),
-                chain_code: IDL.Vec(IDL.Nat8),
-            }),
-        ], []),
-        http_request: IDL.Func([
-            IDL.Record({
-                url: IDL.Text,
-                method: IDL.Variant({
-                    get: IDL.Null,
-                    head: IDL.Null,
-                    post: IDL.Null,
-                }),
-                max_response_bytes: IDL.Opt(IDL.Nat64),
-                body: IDL.Opt(IDL.Vec(IDL.Nat8)),
-                transform: IDL.Opt(IDL.Record({
-                    function: IDL.Func([
-                        IDL.Record({
-                            context: IDL.Vec(IDL.Nat8),
-                            response: http_response,
-                        }),
-                    ], [http_response], ['query']),
-                    context: IDL.Vec(IDL.Nat8),
-                })),
-                headers: IDL.Vec(http_header),
-            }),
-        ], [http_response], []),
-        install_chunked_code: IDL.Func([
-            IDL.Record({
-                arg: IDL.Vec(IDL.Nat8),
-                wasm_module_hash: IDL.Vec(IDL.Nat8),
-                mode: IDL.Variant({
-                    reinstall: IDL.Null,
-                    upgrade: IDL.Opt(IDL.Record({ skip_pre_upgrade: IDL.Opt(IDL.Bool) })),
-                    install: IDL.Null,
-                }),
-                chunk_hashes_list: IDL.Vec(chunk_hash),
-                target_canister: canister_id,
-                sender_canister_version: IDL.Opt(IDL.Nat64),
-                storage_canister: IDL.Opt(canister_id),
-            }),
-        ], [], []),
-        install_code: IDL.Func([
-            IDL.Record({
-                arg: IDL.Vec(IDL.Nat8),
-                wasm_module: wasm_module,
-                mode: IDL.Variant({
-                    reinstall: IDL.Null,
-                    upgrade: IDL.Opt(IDL.Record({ skip_pre_upgrade: IDL.Opt(IDL.Bool) })),
-                    install: IDL.Null,
-                }),
-                canister_id: canister_id,
-                sender_canister_version: IDL.Opt(IDL.Nat64),
-            }),
-        ], [], []),
-        node_metrics_history: IDL.Func([
-            IDL.Record({
-                start_at_timestamp_nanos: IDL.Nat64,
-                subnet_id: IDL.Principal,
-            }),
-        ], [
-            IDL.Vec(IDL.Record({
-                timestamp_nanos: IDL.Nat64,
-                node_metrics: IDL.Vec(node_metrics),
-            })),
-        ], []),
-        provisional_create_canister_with_cycles: IDL.Func([
-            IDL.Record({
-                settings: IDL.Opt(canister_settings),
-                specified_id: IDL.Opt(canister_id),
-                amount: IDL.Opt(IDL.Nat),
-                sender_canister_version: IDL.Opt(IDL.Nat64),
-            }),
-        ], [IDL.Record({ canister_id: canister_id })], []),
-        provisional_top_up_canister: IDL.Func([IDL.Record({ canister_id: canister_id, amount: IDL.Nat })], [], []),
-        raw_rand: IDL.Func([], [IDL.Vec(IDL.Nat8)], []),
-        sign_with_ecdsa: IDL.Func([
-            IDL.Record({
-                key_id: IDL.Record({ name: IDL.Text, curve: ecdsa_curve }),
-                derivation_path: IDL.Vec(IDL.Vec(IDL.Nat8)),
-                message_hash: IDL.Vec(IDL.Nat8),
-            }),
-        ], [IDL.Record({ signature: IDL.Vec(IDL.Nat8) })], []),
-        start_canister: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
-        stop_canister: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
-        stored_chunks: IDL.Func([IDL.Record({ canister_id: canister_id })], [IDL.Vec(chunk_hash)], []),
-        uninstall_code: IDL.Func([
-            IDL.Record({
-                canister_id: canister_id,
-                sender_canister_version: IDL.Opt(IDL.Nat64),
-            }),
-        ], [], []),
-        update_settings: IDL.Func([
-            IDL.Record({
-                canister_id: IDL.Principal,
-                settings: canister_settings,
-                sender_canister_version: IDL.Opt(IDL.Nat64),
-            }),
-        ], [], []),
-        upload_chunk: IDL.Func([
-            IDL.Record({
-                chunk: IDL.Vec(IDL.Nat8),
-                canister_id: IDL.Principal,
-            }),
-        ], [chunk_hash], []),
+        bitcoin_get_balance: IDL.Func([bitcoin_get_balance_args], [bitcoin_get_balance_result], []),
+        bitcoin_get_balance_query: IDL.Func([bitcoin_get_balance_query_args], [bitcoin_get_balance_query_result], ['query']),
+        bitcoin_get_current_fee_percentiles: IDL.Func([bitcoin_get_current_fee_percentiles_args], [bitcoin_get_current_fee_percentiles_result], []),
+        bitcoin_get_utxos: IDL.Func([bitcoin_get_utxos_args], [bitcoin_get_utxos_result], []),
+        bitcoin_get_utxos_query: IDL.Func([bitcoin_get_utxos_query_args], [bitcoin_get_utxos_query_result], ['query']),
+        bitcoin_send_transaction: IDL.Func([bitcoin_send_transaction_args], [], []),
+        canister_info: IDL.Func([canister_info_args], [canister_info_result], []),
+        canister_status: IDL.Func([canister_status_args], [canister_status_result], []),
+        clear_chunk_store: IDL.Func([clear_chunk_store_args], [], []),
+        create_canister: IDL.Func([create_canister_args], [create_canister_result], []),
+        delete_canister: IDL.Func([delete_canister_args], [], []),
+        deposit_cycles: IDL.Func([deposit_cycles_args], [], []),
+        ecdsa_public_key: IDL.Func([ecdsa_public_key_args], [ecdsa_public_key_result], []),
+        fetch_canister_logs: IDL.Func([fetch_canister_logs_args], [fetch_canister_logs_result], ['query']),
+        http_request: IDL.Func([http_request_args], [http_request_result], []),
+        install_chunked_code: IDL.Func([install_chunked_code_args], [], []),
+        install_code: IDL.Func([install_code_args], [], []),
+        node_metrics_history: IDL.Func([node_metrics_history_args], [node_metrics_history_result], []),
+        provisional_create_canister_with_cycles: IDL.Func([provisional_create_canister_with_cycles_args], [provisional_create_canister_with_cycles_result], []),
+        provisional_top_up_canister: IDL.Func([provisional_top_up_canister_args], [], []),
+        raw_rand: IDL.Func([], [raw_rand_result], []),
+        sign_with_ecdsa: IDL.Func([sign_with_ecdsa_args], [sign_with_ecdsa_result], []),
+        start_canister: IDL.Func([start_canister_args], [], []),
+        stop_canister: IDL.Func([stop_canister_args], [], []),
+        stored_chunks: IDL.Func([stored_chunks_args], [stored_chunks_result], []),
+        uninstall_code: IDL.Func([uninstall_code_args], [], []),
+        update_settings: IDL.Func([update_settings_args], [], []),
+        upload_chunk: IDL.Func([upload_chunk_args], [upload_chunk_result], []),
     });
 });
 //# sourceMappingURL=management_idl.js.map
@@ -2771,7 +2949,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   Ed25519PublicKey: () => (/* reexport safe */ _public_key__WEBPACK_IMPORTED_MODULE_9__.Ed25519PublicKey),
 /* harmony export */   Expiry: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.Expiry),
 /* harmony export */   HttpAgent: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.HttpAgent),
+/* harmony export */   IC_ROOT_KEY: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.IC_ROOT_KEY),
 /* harmony export */   IdentityInvalidError: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.IdentityInvalidError),
+/* harmony export */   MANAGEMENT_CANISTER_ID: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.MANAGEMENT_CANISTER_ID),
 /* harmony export */   NodeId: () => (/* reexport safe */ _certificate__WEBPACK_IMPORTED_MODULE_6__.NodeId),
 /* harmony export */   ProxyAgent: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.ProxyAgent),
 /* harmony export */   ProxyMessageKind: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.ProxyMessageKind),
@@ -2882,7 +3062,7 @@ class Observable extends Function {
         _Observable_instances.add(this);
         this.observers = [];
         return new Proxy(this, {
-            apply: (target, _, args) => __classPrivateFieldGet(target, _Observable_instances, "m", _Observable_call).call(target, args[0]),
+            apply: (target, _, args) => __classPrivateFieldGet(target, _Observable_instances, "m", _Observable_call).call(target, args[0], ...args.slice(1)),
         });
     }
     subscribe(func) {
@@ -2891,33 +3071,33 @@ class Observable extends Function {
     unsubscribe(func) {
         this.observers = this.observers.filter(observer => observer !== func);
     }
-    notify(data) {
-        this.observers.forEach(observer => observer(data));
+    notify(data, ...rest) {
+        this.observers.forEach(observer => observer(data, ...rest));
     }
 }
-_Observable_instances = new WeakSet(), _Observable_call = function _Observable_call(message) {
-    this.notify(message);
+_Observable_instances = new WeakSet(), _Observable_call = function _Observable_call(message, ...rest) {
+    this.notify(message, ...rest);
 };
 class ObservableLog extends Observable {
     constructor() {
         super();
         _ObservableLog_instances.add(this);
         return new Proxy(this, {
-            apply: (target, _, args) => __classPrivateFieldGet(target, _ObservableLog_instances, "m", _ObservableLog_call).call(target, args[0]),
+            apply: (target, _, args) => __classPrivateFieldGet(target, _ObservableLog_instances, "m", _ObservableLog_call).call(target, args[0], ...args.slice(1)),
         });
     }
-    log(message) {
-        this.notify({ message, level: 'info' });
+    log(message, ...rest) {
+        this.notify({ message, level: 'info' }, ...rest);
     }
-    warn(message) {
-        this.notify({ message, level: 'warn' });
+    warn(message, ...rest) {
+        this.notify({ message, level: 'warn' }, ...rest);
     }
-    error(message, error) {
-        this.notify({ message, level: 'error', error });
+    error(message, error, ...rest) {
+        this.notify({ message, level: 'error', error }, ...rest);
     }
 }
-_ObservableLog_instances = new WeakSet(), _ObservableLog_call = function _ObservableLog_call(message) {
-    this.log(message);
+_ObservableLog_instances = new WeakSet(), _ObservableLog_call = function _ObservableLog_call(message, ...rest) {
+    this.log(message, ...rest);
 };
 //# sourceMappingURL=observable.js.map
 
@@ -3331,7 +3511,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   blsVerify: () => (/* binding */ blsVerify),
 /* harmony export */   verify: () => (/* binding */ verify)
 /* harmony export */ });
-/* harmony import */ var _vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../vendor/bls/bls */ "./node_modules/@dfinity/agent/lib/esm/vendor/bls/bls.js");
+/* harmony import */ var _noble_curves_bls12_381__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @noble/curves/bls12-381 */ "./node_modules/@noble/curves/esm/bls12-381.js");
+/* harmony import */ var _buffer__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./buffer */ "./node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+
 
 let verify;
 /**
@@ -3339,20 +3521,13 @@ let verify;
  * @param pk primary key: Uint8Array
  * @param sig signature: Uint8Array
  * @param msg message: Uint8Array
- * @returns Promise resolving a boolean
+ * @returns boolean
  */
-async function blsVerify(pk, sig, msg) {
-    if (!verify) {
-        await (0,_vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__["default"])();
-        if ((0,_vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__.bls_init)() !== 0) {
-            throw new Error('Cannot initialize BLS');
-        }
-        verify = (pk1, sig1, msg1) => {
-            // Reorder things from what the WASM expects (sig, m, w).
-            return (0,_vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__.bls_verify)(sig1, msg1, pk1) === 0;
-        };
-    }
-    return verify(pk, sig, msg);
+function blsVerify(pk, sig, msg) {
+    const primaryKey = typeof pk === 'string' ? pk : (0,_buffer__WEBPACK_IMPORTED_MODULE_0__.toHex)(pk);
+    const signature = typeof sig === 'string' ? sig : (0,_buffer__WEBPACK_IMPORTED_MODULE_0__.toHex)(sig);
+    const message = typeof msg === 'string' ? msg : (0,_buffer__WEBPACK_IMPORTED_MODULE_0__.toHex)(msg);
+    return _noble_curves_bls12_381__WEBPACK_IMPORTED_MODULE_1__.bls12_381.verifyShortSignature(signature, message, primaryKey);
 }
 //# sourceMappingURL=bls.js.map
 
@@ -3460,10 +3635,13 @@ function bufFromBufLike(bufLike) {
     if (bufLike instanceof ArrayBuffer) {
         return bufLike;
     }
-    if ('buffer' in bufLike) {
-        return bufLike.buffer;
+    if (Array.isArray(bufLike)) {
+        return uint8ToBuf(new Uint8Array(bufLike));
     }
-    return new Uint8Array(bufLike);
+    if ('buffer' in bufLike) {
+        return bufFromBufLike(bufLike.buffer);
+    }
+    return uint8ToBuf(new Uint8Array(bufLike));
 }
 //# sourceMappingURL=buffer.js.map
 
@@ -3702,110 +3880,6 @@ const randomNumber = () => {
 
 /***/ }),
 
-/***/ "./node_modules/@dfinity/agent/lib/esm/vendor/bls/bls.js":
-/*!***************************************************************!*\
-  !*** ./node_modules/@dfinity/agent/lib/esm/vendor/bls/bls.js ***!
-  \***************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   bls_init: () => (/* binding */ bls_init),
-/* harmony export */   bls_verify: () => (/* binding */ bls_verify),
-/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
-/* harmony export */ });
-/* harmony import */ var base64_arraybuffer__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! base64-arraybuffer */ "./node_modules/base64-arraybuffer/lib/base64-arraybuffer.js");
-/* harmony import */ var _wasm__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./wasm */ "./node_modules/@dfinity/agent/lib/esm/vendor/bls/wasm.js");
-
-// This WASM is generated from the miracl BLS Rust code (see
-// https://github.com/dfinity/miracl_core_bls12381/)
-
-let wasm;
-const wasmBytes = base64_arraybuffer__WEBPACK_IMPORTED_MODULE_0__.decode(_wasm__WEBPACK_IMPORTED_MODULE_1__.wasmBytesBase64);
-/**
- * @returns {number}
- */
-function bls_init() {
-    let ret = wasm.bls_init();
-    return ret;
-}
-let cachegetUint8Memory0 = null;
-function getUint8Memory0() {
-    if (cachegetUint8Memory0 === null || cachegetUint8Memory0.buffer !== wasm.memory.buffer) {
-        cachegetUint8Memory0 = new Uint8Array(wasm.memory.buffer);
-    }
-    return cachegetUint8Memory0;
-}
-function passArray8ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 1);
-    getUint8Memory0().set(arg, ptr / 1);
-    return [ptr, arg.length];
-}
-/**
- * @param {Uint8Array} sig
- * @param {Uint8Array} m
- * @param {Uint8Array} w
- * @returns {number}
- */
-function bls_verify(sig, m, w) {
-    const [ptr0, len0] = passArray8ToWasm0(sig, wasm.__wbindgen_malloc);
-    const [ptr1, len1] = passArray8ToWasm0(m, wasm.__wbindgen_malloc);
-    const [ptr2, len2] = passArray8ToWasm0(w, wasm.__wbindgen_malloc);
-    const ret = wasm.bls_verify(ptr0, len0, ptr1, len1, ptr2, len2);
-    return ret;
-}
-async function load(module, imports) {
-    if (typeof Response === 'function' && module instanceof Response) {
-        const bytes = await module.arrayBuffer();
-        return await WebAssembly.instantiate(bytes, imports);
-    }
-    else {
-        const instance = await WebAssembly.instantiate(module, imports);
-        if (instance instanceof WebAssembly.Instance) {
-            return { instance, module };
-        }
-        else {
-            return instance;
-        }
-    }
-}
-async function init() {
-    const imports = {};
-    const { instance, module } = await load(wasmBytes, imports);
-    wasm = instance.exports;
-    init.__wbindgen_wasm_module = module;
-    return wasm;
-}
-/**
- * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
- * for everything else, calls `WebAssembly.instantiate` directly.
- *
- * @param {InitInput | Promise<InitInput>} module_or_path
- *
- * @returns {Promise<InitOutput>}
- */
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (init);
-//# sourceMappingURL=bls.js.map
-
-/***/ }),
-
-/***/ "./node_modules/@dfinity/agent/lib/esm/vendor/bls/wasm.js":
-/*!****************************************************************!*\
-  !*** ./node_modules/@dfinity/agent/lib/esm/vendor/bls/wasm.js ***!
-  \****************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   wasmBytesBase64: () => (/* binding */ wasmBytesBase64)
-/* harmony export */ });
-const wasmBytesBase64 = `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akE4ENABGiACQbgDakEBNgIAIAJBwANqQTgQ0AEaIAJB+ANqQQE2AgAgAkGABGpBOBDQARogAkEBNgK4BCACQcAEakE4ENABGiACQfgEakEBNgIAIAJBgAVqQTgQ0AEaIAJBuAVqQQE2AgAgAkHABWpBOBDQARogAkH4BWpBATYCACACQYAGakE4ENABGiACQQE2ArgGIAJBwAZqQTgQ0AEaIAJB+AZqQQE2AgAgAkGAB2pBOBDQARogAkG4B2pBATYCACACQcAHakE4ENABGiACQfgHakEBNgIAIAIgARAYAkAgASgCgAZBBEYNACAAKAKABkEERg0AIAJBgARqIgMgAEGAAmoQlgEgAyABQYACahAYDAYLIAJBwAxqIgdBOBDQARogAkEBNgL4DCACQYANakE4ENABGiACQbgNakEBNgIAIAJBgAhqIgRBOBDQARogAkEBNgK4CCACQcAIakE4ENABGiACQfgIakEBNgIAIAJBgApqIgMgAEGAA2oiBRBeIAQgAxCZASADIAFBgANqIgYQXiAEIAMQESAHELYBIAEoAoAGQQRHDQMMBAsgACABEAMMBgsgAkHADGoiAyABQYAFahBeIAJBgAxqIgQgA0HAABDRARogAkGABmogBBCnAQsgAkGABmoQZCACQYAIaiIDIAIQlgEgAxArIAJBgAJqIgQgAxCXASAGIAQQlgEgAkGABGoiByADEJYBIAMgABCWASADIAUQlwEgAxCwASACQYAKaiIEIAEQlgEgBCABQYAEahCXASAEELABIAMgBBAYIAcgAxCXASADIAUQlgECQCABKAKABkECRwRAIAJBwAxqIgMgAUGABWoQXiACQYAIaiADEKYBDAELIAJBwAxqIgMgAUGABWoQXiACQYAMaiIBIANBwAAQ0QEaIAJBgAhqIAEQpwELIAJBgAhqIgEQZCACQYAKaiIDIAEQlgEgAxArIAUgAkGABGoQlgEgBSADEJcBIAJBgAZqIgQgAxCXASABEGQgBiABEJcBIAQQsAEgBBBkIAAgAhCWASAAIAQQlwEMAwsgAkGACmoiAyAFEF4gAkHADGoiBCADEJkBIAMgAUGAAmoQXiAEIAMQEQsgACgCgAZBBEcEQCACQYAKaiIDIABBgAJqEF4gAkHADGoiBCADEJkBIAMgBhBeIAQgAxARCyACQYAEaiIDIAJB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AEHcu8AAKAIAQX4gA0EDdndxNgIACyAAIAEQoAEgAEH0vsAAKAIARw0BQey+wAAgATYCAAsPCyABQYACTwRAIAAgARAWDwsgAUEDdiICQQN0QeS7wABqIQECf0Hcu8AAKAIAIgNBASACdCICcQRAIAEoAggMAQtB3LvAACACIANyNgIAIAELIQIgASAANgIIIAIgADYCDCAAIAE2AgwgACACNgIIC+UDAQN/IwBB0CJrIgMkACADQcAWaiIEQcitwAAQSSADQcgcaiIFQYCuwAAQSSADQQhqIAQgBRBLIANBiAFqQTgQ0AEaIANBwAFqQTgQ0AEaIANB+AFqED0CQCACEIYBBEAgABBVDAELIANB+ARqIgQQPSAEIAEQfSAEEEcgA0H4B2oiARBnIAEgAhB4IAEQRiADQcgcaiICIAEQkAEgA0G4CWogAhCQASACIANBuAhqEJABIANB+AlqIAIQkAEgA0G4CmoiARA9IANBuA1qEFUgASAEEH0gA0HAE2oiARA9IAEgBBB9IAEQogEgA0HAAWogA0GIAWoQUEECayECA0AgAkEBakEBTQRAIANBuA1qIgEQngEgACABQYgGENEBGgUgA0G4DWoQGiADQcAWaiADQbgKaiADQbgJaiADQfgJahALAkACQAJAIANBwAFqIAIQUyADQYgBaiACEFNrQQFqDgMBAgACCyADQcgcaiIBIANBuApqIANB+ARqIANBuAlqIANB+AlqEAogA0HAFmogARADDAELIANByBxqIgEgA0G4CmogA0HAE2ogA0G4CWogA0H4CWoQCiADQcAWaiABEAMLIAJBAWshAiADQbgNaiADQcAWahABDAELCwsgA0HQImokAAvBAwEVfwNAIANBwAFGBEACQCAAQShqIQsgAEEUaigCACIMIQggAEEQaigCACINIQIgAEEMaigCACIOIQEgACgCCCIPIQMgAEEYaigCACIQIQogAEEcaigCACIRIQQgAEEgaigCACISIQcgAEEkaigCACITIQYDQCAHIQkgBCEHIAohBCAFQYACRg0BIAEgAnEhFCABIAJzIRUgBSALaigCACAFQcCiwABqKAIAIAkgBEF/c3EgBCAHcXIgBmogBEEadyAEQRV3cyAEQQd3c2pqaiIGIAhqIQogBUEEaiEFIAIhCCABIQIgAyIBQR53IAFBE3dzIAFBCndzIBQgASAVcXNqIAZqIQMgCSEGDAALAAsFIAAgA2oiAkHoAGogAkEoaigCACACQcwAaigCACACQeAAaigCACIBQQ93IAFBDXdzIAFBCnZzamogAkEsaigCACIBQRl3IAFBDndzIAFBA3ZzajYCACADQQRqIQMMAQsLIAAgBiATajYCJCAAIAkgEmo2AiAgACAHIBFqNgIcIAAgBCAQajYCGCAAIAggDGo2AhQgACACIA1qNgIQIAAgASAOajYCDCAAIAMgD2o2AggL5AEBAn8jAEGAA2siAyQAIAMQPSAAIAEgAkEfdSIEIAJzIARBf3NqQQJtIgJBAWtBH3YQbyAAIAFBgANqIAJBAXNBAWtBH3YQbyAAIAFBgAZqIAJBAnNBAWtBH3YQbyAAIAFBgAlqIAJBA3NBAWtBH3YQbyAAIAFBgAxqIAJBBHNBAWtBH3YQbyAAIAFBgA9qIAJBBXNBAWtBH3YQbyAAIAFBgBJqIAJBBnNBAWtBH3YQbyAAIAFBgBVqIAJBB3NBAWtBH3YQbyADIAAQfSADEKIBIAAgAyAEQQFxEG8gA0GAA2okAAvlAwEIfyMAQZAGayICJAAgAEFAayEIAkAgAUH4AGooAgAgASgCOGqsIABB+ABqKAIAIgcgACgCOCIEaqx+Qv///w9XDQAgBEEBSgR/IAAQHiAAKAJ4BSAHC0EBTA0AIAgQHgsgAkHYpMAAEEkgAkE4aiIHQfAAENABGiACIQNBACECA0AgAkE4RgRAAkAgB0E4aiEEQQAhAgNAIAJBOEYNASACIARqIAIgA2opAwA3AwAgAkEIaiECDAALAAsFIAIgB2pCADcDACACQQhqIQIMAQsLIANBqAFqIgYgABBdIANB4AFqIgUgARBdIANBmAJqIgIgACABEAUgA0GIA2oiBCAIIAFBQGsiARAFIAYgCBBgIAYQQiAFIAEQYCAFEEIgA0H4A2oiCSAGIAUQBUEAIQEgA0HoBGoiBkHwABDQASEFA0AgAUHwAEcEQCABIAVqIAEgAmopAwA3AwAgAUEIaiEBDAELCyAGIAQQYkEAIQEDQCABQfAARwRAIAEgBGoiBSABIAdqKQMAIAUpAwB9NwMAIAFBCGohAQwBCwsgAiAEEGIgAhBIIAkgBhBjIAkQSCADQdgFaiIBIAIQayAAIAEQaiAAQQM2AjggASAJEGsgCCABEGogAEECNgJ4IANBkAZqJAALowIBCH8jAEGABmsiAiQAIAIgAEGAAWoiBxBeIAJBgAFqIgQgBxBeIAQQLSACQYACaiIFIAIQXiAFIABBgAJqIgMQESACQYADaiIBIAMQXiABEC0gAyAEEJkBIAMgBBCaASADEKkBIAMQuAEgAxC4ASADEKkBIAFBDBCrASABEHwgARCpASACQYAEaiIIIAEQXiAIIAMQESACQYAFaiIGIAQQXiAGIAEQmgEgBhCpASADIAUQESAFIAEQmQEgBSABEJoBIAEgBRCaASABEKkBIAQgARB7IAQQqQEgBiAEEBEgBiAIEJoBIAUgABCZASAFIAIQESAAIAQQmQEgABCpASAAIAUQESAAELgBIAAQqQEgByAGEJkBIAcQqQEgAkGABmokAAu8AgEGfyMAQYAIayIBJAAgASAAEIwBIAFBgAJqIgMgAEGABGoiBRCMASABQYAEaiIEIABBgAJqIgYQjAEgAUGABmoiAkE4ENABGiABQQE2ArgGIAFBwAZqQTgQ0AEaIAFB+AZqQQE2AgAgAUGAB2pBOBDQARogAUG4B2pBATYCACABQcAHakE4ENABGiABQfgHakEBNgIAIAAQISACIAAQlgEgAiAAEJcBIAAgAhCXASAAELABIAEQyQEgARCzASAAIAEQlwEgAxAhIAMQZCACIAMQlgEgAiADEJcBIAMgAhCXASADELABIAQQISACIAQQlgEgAiAEEJcBIAQgAhCXASAEELABIAYQsgEgBhCzASAFEMkBIAUQswEgBiADEJcBIAUgBBCXASAAQQU2AoAGIAAQnAEgAUGACGokAAv/AQEHfyMAQcACayIBJAAgASAAQUBrIgYQkAEgARBMIAFBQGsiAyAGEJABIAMgAEGAAWoiAhBKIAFBgAFqIgQgAhCQASAEEEwgAiABEK4BIAIgARB3IAIQQiACEIIBIAIQggEgAhBCIARBDBA0IAFBwAFqIgcgBBCQASAHIAIQSiABQYACaiIFIAEQkAEgBSAEEHcgBRBCIAIgAxBKIAMgBBCuASADIAQQdyAEIAMQdyABIAQQfiABEEIgBSABEEogBSAHEHcgAyAAEK4BIAMgBhBKIAAgARCuASAAEEIgACADEEogABCCASAAEEIgBiAFEK4BIAYQQiABQcACaiQAC84CAgd/An4CQAJAAkBBDSABQTpuIgJrIgRBDU0EQEEMIAJrIgNBDk8NASAAIAAgA0EDdGopAwBBOiABIAJBOmxrIgNrrSIKhyAAIARBA3RqKQMAIAOtIgmGhDcDaCAEQQ1rIQUgAEHgAGohBCACQQFqIQZBACACQQN0ayEHQQshAwNAAkAgA0ECaiAGTQRAIAFBrAZPDQEgACACQQN0aiAAKQMAIAmGQv//////////A4M3AwADQCACRQ0HIABCADcDACACQQFrIQIgAEEIaiEADAALAAsgAyAFakEOTw0EIAQgBCAHaiIIQQhrKQMAIAqHIAgpAwAgCYZC//////////8Dg4Q3AwAgA0EBayEDIARBCGshBAwBCwsgAkEOQYCywAAQOwALIARBDkHQscAAEDsACyADQQ5B4LHAABA7AAtBf0EOQfCxwAAQOwALC6cCAQR/IABCADcCECAAAn9BACABQYACSQ0AGkEfIAFB////B0sNABogAUEGIAFBCHZnIgNrdkEBcSADQQF0a0E+agsiBDYCHCAEQQJ0Qey9wABqIQMgACECAkACQAJAAkBB4LvAACgCACIAQQEgBHQiBXEEQCADKAIAIQMgBBCfASEAIAMQywEgAUcNASADIQAMAgtB4LvAACAAIAVyNgIAIAMgAjYCAAwDCyABIAB0IQQDQCADIARBHXZBBHFqQRBqIgUoAgAiAEUNAiAEQQF0IQQgACIDEMsBIAFHDQALCyAAKAIIIgEgAjYCDCAAIAI2AgggAiAANgIMIAIgATYCCCACQQA2AhgPCyAFIAI2AgALIAIgAzYCGCACIAI2AgggAiACNgIMC7YCAQV/IAAoAhghBAJAAkAgACAAKAIMRgRAIABBFEEQIABBFGoiASgCACIDG2ooAgAiAg0BQQAhAQwCCyAAKAIIIgIgACgCDCIBNgIMIAEgAjYCCAwBCyABIABBEGogAxshAwNAIAMhBSACIgFBFGoiAygCACICRQRAIAFBEGohAyABKAIQIQILIAINAAsgBUEANgIACwJAIARFDQACQCAAIAAoAhxBAnRB7L3AAGoiAigCAEcEQCAEQRBBFCAEKAIQIABGG2ogATYCACABDQEMAgsgAiABNgIAIAENAEHgu8AAQeC7wAAoAgBBfiAAKAIcd3E2AgAPCyABIAQ2AhggACgCECICBEAgASACNgIQIAIgATYCGAsgAEEUaigCACIARQ0AIAFBFGogADYCACAAIAE2AhgLC+UBAQZ/IwBBgARrIgIkACACIAAQXiACQYABaiIFIABBgAFqIgYQXiACQYACaiIDQTgQ0AEaIAJBATYCuAIgAkHAAmpBOBDQARogAkH4AmpBATYCACACQYADaiIEIAYQXiACIAEQESAFIAFBgAFqIgcQESADIAcQmQEgAyABEJoBIAQgABCaASADEKkBIAQQqQEgBCADEBEgAyACEJkBIAMQNiAEIAMQmgEgBBCpASADIAUQmQEgAxA2IAYgBBCZASAGIAMQmgEgBRB8IAAgBRCZASAAIAIQmgEgABCwASACQYAEaiQAC28BDH9BjL/AACgCACICRQRAQZy/wABB/x82AgBBAA8LQYS/wAAhBgNAIAIiASgCCCECIAEoAgQhAyABKAIAIQQgAUEMaigCABogASEGIAVBAWohBSACDQALQZy/wAAgBUH/HyAFQf8fSxs2AgBBAAuAAgEGfyMAQYAIayIBJAAgACgCgAZBAUcEQCABIAAQjAEgAUGAAmoiAiAAQYACaiIEEIwBIAFBgARqIgUgAEGABGoiAxCMASABQYAGaiIGIAAQjAEgARAhIAIgAxAYIAIQswEgAhCwASAFECEgBiAEEBggBhCzASADIAAQlwEgAyAEEJcBIAMQsAEgAxAhIAAgARCWASABIAIQlwEgARCwASABIAUQlwEgASAGEJcBIAEQsAEgARArIAIQZCAFEGQgACACEJcBIAQgBRCWASAEIAYQlwEgAyABEJcBIABBBEEFIAAoAoAGQX5xQQJGGzYCgAYgABCdAQsgAUGACGokAAuZAgEBfyMAQYANayIDJAAgAyABEGkgAxCdASADQYgGaiIBIAIQXSABEEIgA0HABmoiAiABEF0gAkEDECkaIAIQQiADQfgGaiADEGkCQCACEFdFBEAgA0HABmoQKkECayECA0AgAkEBakEBTQRAIANB+AZqIgEQnAEMAwUgA0H4BmoQEwJAAkACQCADQcAGaiACEFMgA0GIBmogAhBTa0EBag4DAQIAAgsgA0H4BmogAxAHDAELIAMQngEgA0H4BmogAxAHIAMQngELIAJBAWshAgwBCwALAAsgA0H4BmoiARC3ASABQYABahC2ASABQYACahCxASABQYAEahCxASABQQE2AoAGCyAAIAFBiAYQ0QEaIANBgA1qJAALhgICBH8BfiMAQTBrIgIkACABQQRqIQQgASgCBEUEQCABKAIAIQMgAkEQaiIFQQA2AgAgAkIBNwMIIAIgAkEIajYCFCACQShqIANBEGopAgA3AwAgAkEgaiADQQhqKQIANwMAIAIgAykCADcDGCACQRRqIAJBGGoQDBogBEEIaiAFKAIANgIAIAQgAikDCDcCAAsgAkEgaiIDIARBCGooAgA2AgAgAUEMakEANgIAIAQpAgAhBiABQgE3AgQgAiAGNwMYQQxBBBC5ASIBRQRAQQxBBBDPAQALIAEgAikDGDcCACABQQhqIAMoAgA2AgAgAEGEt8AANgIEIAAgATYCACACQTBqJAAL5AEBAn8jAEHAAWsiAyQAIAMQZyAAIAEgAkEfdSIEIAJzIARBf3NqQQJtIgJBAWtBH3YQbiAAIAFBwAFqIAJBAXNBAWtBH3YQbiAAIAFBgANqIAJBAnNBAWtBH3YQbiAAIAFBwARqIAJBA3NBAWtBH3YQbiAAIAFBgAZqIAJBBHNBAWtBH3YQbiAAIAFBwAdqIAJBBXNBAWtBH3YQbiAAIAFBgAlqIAJBBnNBAWtBH3YQbiAAIAFBwApqIAJBB3NBAWtBH3YQbiADIAAQeCADEKQBIAAgAyAEQQFxEG4gA0HAAWokAAvDAwIGfwN+IwBB8ABrIgEkACABQcCywAAQSSABQThqIAEQXSAAEEICQAJAAkAgAQJ/IAAoAjgiAkEQTARAIAJBAWsQNQwBCyABKQMwIghCAXwiByAIVA0BIAApAzAiCEKAgICAgICAgIB/USAHQn9RcQ0CIAFBOGoiAiAIIAd/pxApIQcgASABKQNoIAdCOoZ8NwNoIAAgAhBhIAAQQkECCyIEECgDQCAERQ0DQQAhAyABIAEpAwgiCEI5hkKAgICAgICAgAKDIAEpAwBCAYeEIgc3AwAgACkDACAHfSEHIABBCGohBSAAIAFBOGoiAkEBA38gAiADaiAHQv//////////A4M3AwAgB0I6hyEHIANBKEYEfyABIAEpAzBCAYciCDcDMCACIAApAzAgCH0gB3wiBzcDMCAHQj+IpwUgASADaiIGQQhqIAhCAYcgBkEQaikDACIIQjmGQoCAgICAgICAAoOEIgk3AwAgAyAFaikDACAHfCAJfSEHIANBCGohAwwBCwtrEDAgBEEBayEEDAALAAtB4LPAAEEZQcSzwAAQWQALQYC0wABBH0HEs8AAEFkACyAAQQE2AjggAUHwAGokAAvuAQECfyMAQbABayIDJAAgA0EwENABIQMCQAJAA0AgAkEwRgRAIANBMGogAxBwIAFBMGohAUEAIQIDQCACQTBGDQMgAkEwRg0EIAIgA2ogASACai0AADoAACACQQFqIQIMAAsACyACQeAARwRAIAIgA2ogASACai0AADoAACACQQFqIQIMAQsLQeAAQeAAQYCmwAAQOwALIANB8ABqIgEgAxBwIABBOBDQASIAQQE2AjggAEFAa0E4ENABIABB+ABqQQE2AgAgACABEK4BIANBMGoQrgEgA0GwAWokAA8LIAJBMGpB4ABBkKbAABA7AAuPAgEDfyMAQSBrIgUkAEEBIQZB2LvAAEHYu8AAKAIAIgdBAWo2AgACQEGgv8AALQAABEBBpL/AACgCAEEBaiEGDAELQaC/wABBAToAAAtBpL/AACAGNgIAAkACQCAHQQBIIAZBAktyDQAgBSAEOgAYIAUgAzYCFCAFIAI2AhBBzLvAACgCACICQQBIDQBBzLvAACACQQFqIgI2AgBBzLvAAEHUu8AAKAIAIgMEf0HQu8AAKAIAIAUgACABKAIQEQAAIAUgBSkDADcDCCAFQQhqIAMoAhQRAABBzLvAACgCAAUgAgtBAWs2AgAgBkEBSw0AIAQNAQsACyMAQRBrIgIkACACIAE2AgwgAiAANgIIAAucAQEEfyMAQYADayICJAAgAiAAEF4gAkGAAWoiASAAQYABaiIEEF4gAkGAAmoiAyAAEF4gAyAEEBEgAiAEEJoBIAEQfCABIAAQmgEgAhCpASABEKkBIAAgAhCZASAAIAEQESABIAMQmQEgARB8IAEgAxCaASABEKkBIAEQNiAAIAEQmgEgAxC4ASAEIAMQmQEgABCwASACQYADaiQAC7kBAQJ/IwBBIGsiAyQAAkAgASABIAJqIgFLDQAgAEEEaigCACICQQF0IgQgASABIARJGyIBQQggAUEISxshAQJAIAIEQCADQRhqQQE2AgAgAyACNgIUIAMgACgCADYCEAwBCyADQQA2AhALIAMgASADQRBqECYgAygCAARAIANBCGooAgAiAEUNASADKAIEIAAQzwEACyADKAIEIQIgAEEEaiABNgIAIAAgAjYCACADQSBqJAAPCxBlAAusAQECfyMAQYADayIDJAAgA0EIaiABEJABAkAgAgRAIANBCGogAhCuAQwBCyADQQhqEDoLIANByABqIgJB8LTAABBJIANBgAFqIAIQjgEgA0HAAWoiAiADQQhqIgQQkAEgAhBMIAIgARBKIAAgARCQASAAIAQQSiADQYACaiACEJABIAAQViEBIANBwAJqIgIgABCQASACEEMgAhBCIAAgAiABEHIgA0GAA2okAAueAQEFfyMAQYABayICJAAgAkE4ENABIgJBATYCOCACQUBrIgNBOBDQARogAkEBNgJ4IAIgABCuASACIAFBgAFqIgUQSiADIAEQrgEgAyAAQYABaiIGEEoCQCACIAMQWEUNACACIABBQGsQrgEgAiAFEEogAkFAayIAIAFBQGsQrgEgACAGEEogAiAAEFhFDQBBASEECyACQYABaiQAIAQLpwEBA38jAEEwayICJAAgAUEEaiEDIAEoAgRFBEAgASgCACEBIAJBEGoiBEEANgIAIAJCATcDCCACIAJBCGo2AhQgAkEoaiABQRBqKQIANwMAIAJBIGogAUEIaikCADcDACACIAEpAgA3AxggAkEUaiACQRhqEAwaIANBCGogBCgCADYCACADIAIpAwg3AgALIABBhLfAADYCBCAAIAM2AgAgAkEwaiQAC5UBAQJ/AkACQAJAAkACfwJAAkACf0EBIgMgAUEASA0AGiACKAIAIgRFDQEgAigCBCICDQQgAQ0CQQEMAwshA0EAIQEMBgsgAQ0AQQEMAQsgAUEBELkBCyICRQ0BDAILIAQgARCsASICDQELIAAgATYCBEEBIQEMAQsgACACNgIEQQAhAwsgACADNgIAIABBCGogATYCAAvvMwISfwV+IwBBMGsiDiQAIA5BEGogACABEFsgDiAOKAIUIgA2AhwgDiAOKAIQIgg2AhggDkEIaiACIAMQWyAOIA4oAgwiATYCJCAOIA4oAggiAzYCICAOIAQgBRBbIA4gDigCBCIFNgIsIA4gDigCACINNgIoIAAhBCMAQZAVayICJAAjAEGwBmsiCiQAIApBEGpBOBDQARogCkHQAGpBOBDQASEVIApBiAFqQQE2AgAgCkEBNgJIIApBkAFqIgBB2KTAABBJIAAQKiEPIApByAFqIhNBgAIQ0AEaIApB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ABBJAkACQAJAAkADQAJAIAxBMEYEQCAAIAAtAABBH3E6AAAgAEHoAGogABC+ASAEDQFBAEEAQZiBwAAQOwALIAQgDEYNAiAAIAxqIAggDGotAAA6AAAgDEEBaiEMDAELC0EAIQwgCCwAACIJQQBIDQIgCEEwaiEDIARBMCAEQTBLG0EwayEIA0AgDEEwRgRAIABBoAFqIgQgABC+ASMAQYABayIDJAAgARBnIAEgAEHoAGoQwAEgAUFAayIIIAQQwAEgAUGAAWoQygEgARBCIAMgARBPIANBQGsiBCAIEJABIAQQTCAEIAMQWEUEQCABEJIBCyADQYABaiQADAULIAggDEYNAiAAIAxqIAMgDGotAAA6AAAgDEEBaiEMDAALAAsgBCAEQYiBwAAQOwALIAxBMGogBEGogcAAEDsACyMAQcABayIDJAAgAEGgAWoiBBBnIANBOBDQASIDQQE2AjggBCAAQegAahDAASAEEEIgBEGAAWoQygEgA0FAayIIIAQQTwJAAkACQCAIIAMQWkEBRgRAIANBgAFqIgggA0FAayADECMgCBBWDQEMAgsgBBCSAQwCCyADQYABaiIIEEMgCBBCCyAEQUBrIANBgAFqEK4BCyADQcABaiQAIAlBIHEiA0EAIABB4AFqEE0iBEEBRxtBASADIARBAUdyGwRAIABBoAFqEKQBCyABIABBoAFqQcABENEBGgsgAEHgAmokAAJ/QQAhAyMAQcAFayIAJAACQCABEIYBDQAgAEEIaiIIQZCtwAAQSSAAQYAEaiIEQbiuwAAQSSAAQUBrIgkgBBCOASAAQYABaiIEEGcgBCABEHggBCAJEEogAEHAAmoiBCABIAgQvQEgASAEECQNACAAQYAEaiIEIABBwAJqIgEgAEEIahC9ASABIARBwAEQ0QEaIAEQpAEgAEGAAWogARAkRQ0AQQEhAwsgAEHABWokAEF/IANFDQAaIAJBwAFqEKQBIAJBgANqIQhBACEAIwBB4ARrIgEkACABQeAAENABIQECQCAFBEADQCAAQeAARgRAIAEgAS0AAEEfcToAACABQeAAaiABEB9BACEAAkAgDSwAACILQQBOBEAgDUHgAGohAyAFQeAAIAVB4ABLG0HgAGshBANAIABB4ABGBEAgAUHgAWoiACABEB8gCCABQeAAaiAAED8MAwsgACAERwRA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AWoQmQEgACAEEBEgAEGAAWoiASAFQYABahCZASABIAgQESAAIAEQeg0BC0EADAELQQELIQEgAEGAAmokACANQcAHaiQAQX8gAUUNABojAEHgA2siACQAIABBgAFqIgFBwKjAABBJIABBuAFqIgNB+KjAABBJIAAgASADEEsgAEHwAmoiAUGwqcAAEEkgAEGoA2oiA0HoqcAAEEkgAEHwAWoiBCABIAMQSyACQYAGaiIBIAAgBBA/IABB4ANqJAAgAkGACWohByACQYADaiEIIwBBkDRrIgAkACAAQYAoaiIDQcitwAAQSSAAQYguaiIEQYCuwAAQSSAAIAMgBBBLIABBgAFqQTgQ0AEaIABBuAFqQTgQ0AEaIABB8AFqED0CQCACQcABaiIEEIYBRQRAIAIQhgEEQCAHIAEgBBAODAILIABB8ARqIgMQPSADIAEQfSADEEcgAEHwB2oiBRBnIAUgBBB4IAUQRiAAQbAJaiIEED0gBCAIEH0gBBBHIABBsAxqIggQZyAIIAIQeCAIEEYgAEGILmoiASAFEJABIABB8A1qIAEQkAEgASAAQbAIahCQASAAQbAOaiABEJABIAEgCBCQASAAQfAOaiABEJABIAEgAEHwDGoQkAEgAEGwD2ogARCQASAAQfAPaiIBED0gAEHwEmoiBRA9IABB8BVqEFUgASADEH0gBSAEEH0gAEH4G2oiARA9IAEgAxB9IAEQogEgAEH4HmoiARA9IAEgBBB9IAEQogEgAEG4AWogAEGAAWoQUEECayEBA0AgAUEBakEBTQRAIABB8BVqIgEQngEgByABQYgGENEBGgwDBSAAQfAVaiIEEBogAEH4IWoiAyAAQfAPaiAAQfANaiAAQbAOahALIABBgChqIgUgAEHwEmogAEHwDmogAEGwD2oQCyADIAUQAyAEIAMQAQJAAkACQCAAQbgBaiABEFMgAEGAAWogARBTa0EBag4DAQIAAgsgAEGILmoiAyAAQfAPaiAAQfAEaiAAQfANaiAAQbAOahAKIABB+CFqIgQgA0GIBhDRARogAyAAQfASaiAAQbAJaiAAQfAOaiAAQbAPahAKIAQgAxADIABB8BVqIAQQAQwBCyAAQYguaiIDIABB8A9qIABB+BtqIABB8A1qIABBsA5qEAogAEH4IWoiBCADQYgGENEBGiADIABB8BJqIABB+B5qIABB8A5qIABBsA9qEAogBCADEAMgAEHwFWogBBABCyABQQFrIQEMAQsACwALIAcgCCACEA4LIABBkDRqJAAjAEHgH2siCCQAIAhB0BNqIgFByK3AABBJIAhB2BlqIg1BgK7AABBJIAggASANEEsgCEGAAWoiC0GQrcAAEEkgAkGID2oiACAHEGkgCEG4AWoiBSAAEGkjAEGACGsiAyQAIAMgBRCMASADQYACaiIJIAVBgAJqIg8QjAEgA0GABGoiCiAFEIwBIANBgAZqIgRBOBDQARogA0EBNgK4BiADQcAGakE4ENABGiADQfgGakEBNgIAIANBgAdqQTgQ0AEaIANBuAdqQQE2AgAgA0HAB2pBOBDQARogA0H4B2pBATYCACAFEJ0BIAMQISAJIAVBgARqIgwQGCAJEGQgAyAJEHkgAxCwASAJIAwQlgEgCRAhIAkQZCAKIA8QGCAJIAoQeSAJELABIAogDxCWASAKECEgBCAFEJYBIAQgDBAYIAogBBB5IAoQsAEgBCAPEJYBIAQgChAYIAQQZCAFIAMQGCAEIAUQlwEgDCAJEBggDBBkIAQgDBCXASAEELABIwBBgAJrIgYkACAGIAQQXiAGQYABaiIQIARBgAFqIhIQXiAGEC0gEBAtIBAQfCAQEKkBIAYgEBB7IAYQPiAEIAYQESAGEDYgBhCpASASIAYQESAGQYACaiQAIAUgAxCWASAFIAQQGCAPIAkQlgEgDyAEEBggDCAKEJYBIAwgBBAYIAVBBTYCgAYgA0GACGokACAAEJ4BIAAgBRAHIAUgABBtIAAgCBAyIAAgCBAyIAAgBRAHIAhBwAdqIgQgABBpIAQQEyAEIAAQByANIAAgCxAbIAhByA1qIgMgDRBpIAMQngEgASAAEGkgARCeASAAIAMQbSAAIAEQByANIAAgCxAbIAMgDRBtIAMQngEgASAAEG0gARCeASAAIAMQbSAAIAEQByANIAAgCxAbIAMgDRBtIAMQngEgASAAEG0gASAIEDIgACADEG0gACABEAcgDSAAIAsQGyADIA0QbSANIAMgCxAbIAMgDRBtIAEgABBtIAEgCBAyIAEgCBAyIAMgARAHIAEgABBtIAEQngEgACADEG0gACABEAcgACAEEAcgABCcASAIQeAfaiQAIAcgAEGIBhDRARpBACEAIwBBgAJrIgEkACABEGwCQCAHIAEQegR/IAdBgAFqIAFBgAFqEHoFQQALRQ0AIAdBgAJqEIcBRQ0AIAdBgARqEIcBIQALIAFBgAJqJABBACAADQAaQX8LIAJBkBVqJAAgDkEoahC0ASAOQSBqELQBIA5BGGoQtAEgDkEwaiQAC58BAgJ/BX4gAEEwaiICKQMAIAFBP3GtIgSGIQUgACkDKCIGQTogAWtBP3GtIgiHIQdBBiEBA38gAiAFIAeENwMAIAFBAU0EfyAAIAApAwAgBIZC//////////8DgzcDACAAKQMwQiSHpwUgAUEBayEBIAJBEGsiA0EIaiECIAYgBIZC//////////8DgyEHIAMpAwAiBiAIhyEFDAELCxoLiAECA34DfyMAQRBrIgUkAAN+IAZBOEYEfiAFQRBqJAAgAwUgBSAAIAZqIgcpAwAiAiACQj+HIAGsIgIgAkI/hxAvIAcgBSkDACIEIAN8IgJC//////////8DgzcDACACIARUrSAFQQhqKQMAIANCP4d8fEIGhiACQjqIhCEDIAZBCGohBgwBCwsLigECA38BfiMAQUBqIgIkACACQQhqIgEgABBdIAEQQiACQThqIQFBBiEDQdwCIQACQAJAA0AgA0EATgRAIAEpAwAiBEIAUg0CIAFBCGshASAAQTprIQAgA0EBayEDDAELC0EAIQAMAQsDQCAEUA0BIABBAWohACAEQgJ/IQQMAAsACyACQUBrJAAgAAuHAQEDfyMAQYACayIBJAAgABCwASABIAAQXiABQYABaiICQTgQ0AEaIAFBATYCuAEgAUHAAWpBOBDQARogAUH4AWpBATYCACABIABBgAFqIgMQmgEgARA2IAIgARCZASACIAMQmgEgAyABEJkBIAMgABCaASAAIAIQmQEgABCwASABQYACaiQAC30CBH4BfyABQT9xrSECQTogAWtBP3GtIQRBACEBIAApAwAiBSEDA38gAUEwRgR/IAAgACkDMCAChzcDMCAFQn8gAoZCf4WDpwUgACABaiIGIAMgAocgBkEIaikDACIDIASGQv//////////A4OENwMAIAFBCGohAQwBCwsaC2kBBH8jAEHAAWsiASQAIAEgABCQASABQUBrIgIgABCQASABQYABaiIDIABBQGsiBBCQASABIAQQdyACIAAQdyACEEIgBCACEEogAxBDIAAgAxB3IAEQQiAAEEIgACABEEogAUHAAWokAAuCAQIBfwF+IABB8AAQ0AEhAANAIAJBOEYEQAJAIAAgASkDMCIDQjqHNwM4IAAgA0L//////////wODNwMwIABBQGshAEEAIQIDQCACQTBGDQEgACACakIANwMAIAJBCGohAgwACwALBSAAIAJqIAEgAmopAwA3AwAgAkEIaiECDAELCwtuAQZ+IAAgA0L/////D4MiBSABQv////8PgyIGfiIHIAUgAUIgiCIIfiIJIAYgA0IgiCIGfnwiBUIghnwiCjcDACAAIAcgClatIAYgCH4gBSAJVK1CIIYgBUIgiIR8fCABIAR+IAIgA358fDcDCAtqAgF/BX4gASkDCCAAKQMAhSIGQgGGQgGHIQdBACACa6whCAN+IANBOEYEfiAFBSAAIANqIgIgAikDACIEIAaFIAEgA2opAwAgBIUgCIOFIgQgB4U3AwAgBCAFhSEFIANBCGohAwwBCwsaC18CAX8EfkIBIQNBMCECA38gAkF4RgR/IARCAYYgA3ynQQFrBSABIAJqKQMAIgUgACACaikDACIGfUI6hyADgyAEhCEEIAJBCGshAiAFIAaFQgF9QjqHIAODIQMMAQsLC2kBBH8jAEGAAmsiAiQAIAIgARBeIAJBgAFqIgMgARBeIAIQLSADIAIQESAAIAMQmAEgAEGAAmoiBCADEJgBIABBgARqIgUgAxCYASAEIAEQpgEgBSACEKYBIABBBTYCgAYgAkGAAmokAAtiAQJ/IwBBQGoiAiQAIAAQQiACIAAQkAECQCABBEAgACABEK4BDAELIAAQOgtBACEBA0AgA0UEQCAAEExBASABQQFqIAFBAUYiAxshAQwBCwsgACACEEogABAeIAJBQGskAAtnAQJ/IwBBQGoiAyQAAkAgASABQR91IgJqIAJzIgIgACgCOGxBgICAEE4EQCADIAIQOSAAIAMQSgwBCyAAIAIQKRogACAAKAI4IAJsNgI4CyABQQBIBEAgABBDIAAQQgsgA0FAayQAC2cAIABBAXYgAHIiAEECdiAAciIAQQR2IAByIgBBCHYgAHIiAEEQdiAAciIAIABBAXZB1arVqgVxayIAQQJ2QbPmzJkDcSAAQbPmzJkDcWoiAEEEdiAAakGPnrz4AHFBgYKECGxBGHYLYQEDfyMAQYABayIBJAAgASAAEJABIAFBQGsiAkE4ENABGiABQQE2AnggASAAQUBrIgMQdyABEEMgAiABEK4BIAIgAxB3IAMgARCuASADIAAQdyAAIAIQrgEgAUGAAWokAAtVAgJ/AX4jAEHwAGsiASQAIAFBwLLAABBJIAApAwAhAyABQThqIgIgABBdIABBARAsIAIgARBgIAIQQiACQQEQLCAAIAIgA0ICgacQMCABQfAAaiQAC5gBAQZ/IwBBwAFrIgMkACAAIAEQXiAAEC0gA0GIAWoiBkHop8AAEEkjAEFAaiIEJAAgA0EIaiICQTgQ0AEiBUEBNgI4IAVBQGtBOBDQASAFQfgAakEBNgIAIAQgBhCOASAFIAQQrgEQwQEgBEFAayQAIAIQqQEgAhB8IAIQqQEgACABEBEgACACEJoBIAAQtQEgA0HAAWokAAtZAQJ/IwBBQGoiAyQAIABBOBDQASIAQQE2AjgCQCABQQBOBEAgACABEJMBDAELIANBCGoiAkHAssAAEEkgAiABEJMBIAIQQiAAIAIQagsgABBUIANBQGskAAu9CAEKfyMAQYABayIHJAAgB0EIaiIDQcCywAAQSSADQQEQlAECQAJAA0AgAUEwRgRAIANBMGogAykDMEIBhzcDACADQThqIQEDQCACRQ0EIAFCADcDACACQQFrIQIgAUEIaiEBDAALAAsgAUE4Rg0BIAFBOEcEQCABIANqIAEgA2oiBEEIaikDAEI5hkL//////////wODIAQpAwBCAYeENwMAIAVBAWohBSABQQhqIQEMAQsLQQdBB0GEm8AAEDsACyAFQQdB9JrAABA7AAsgA0EBEJQBIANBARAsIAdBQGshBUEAIQIjAEGgCmsiASQAIAFBOBDQASIBQUBrQTgQ0AEhBiABQYABakE4ENABGiABQcABakE4ENABGiABQYACakE4ENABGiABQcACakE4ENABGiABQYADakE4ENABGiABQcADakE4ENABGiABQYAEakE4ENABGiABQcAEakE4ENABGiABQYAFakE4ENABGiABQcAFakE4ENABGiABQYAGakE4ENABGiABQcAGakE4ENABGiABQYAHakE4ENABGiABQcAHakE4ENABGiABQfgHakEBNgIAIAFBuAdqQQE2AgAgAUH4BmpBATYCACABQbgGakEBNgIAIAFB+AVqQQE2AgAgAUG4BWpBATYCACABQfgEakEBNgIAIAFBuARqQQE2AgAgAUH4A2pBATYCACABQbgDakEBNgIAIAFB+AJqQQE2AgAgAUG4AmpBATYCACABQfgBakEBNgIAIAFBuAFqQQE2AgAgAUH4AGpBATYCACABQQE2AjggAUGBCGpB5wAQ0AEaIAFB6AhqIgQgABCQASAEEEIgAUGoCWoiBCADEF0gBBBCIAQQKkEDaiIIQQJ2IgNBAWohCQJAA0AgAiAJRgRAIAEQygEgBiABQegIahCuASABQeAJakE4ENABGiABQQE2ApgKQYB5IQIMAgsgAUGoCWoiBCAEQQQQjwEiChCUASAEEEIgAkHnAEcEQCABQYEIaiACaiAKOgAAIAFBqAlqQQQQLCACQQFqIQIMAQsLQecAQecAQaC0wAAQOwALA0AgAgRAIAFB4AlqIgQgASACaiIGQcAHahCuASAGQYAIaiIGIAQQrgEgBiABQegIahBKIAJBQGshAgwBCwsCQAJAAkACQCAIQZwDSQRAIAFBgQhqIANqLAAAIgJBEE8NASAFIAEgAkEGdGoQkAEgA0EBayICQeYASyEEA0AgAkF/Rg0DIAUQTCAFEEwgBRBMIAUQTCAEDQQgAUGBCGogAmotAAAiA0EQSQRAIAUgASADQQZ0ahBKIAJBAWshAgwBCwsgA0EYdEEYdUEQQeC0wAAQOwALIANB5wBBsLTAABA7AAsgAkEQQcC0wAAQOwALIAUQHiABQaAKaiQADAELIAJB5wBB0LTAABA7AAsgACAFEK4BIAdBgAFqJAALbAEBfyMAQTBrIgMkACADIAE2AgQgAyAANgIAIANBHGpBAjYCACADQSxqQQE2AgAgA0ICNwIMIANB2LjAADYCCCADQQE2AiQgAyADQSBqNgIYIAMgAzYCKCADIANBBGo2AiAgA0EIaiACEGYAC2UBAn8gACAAKAIAIgJBCGoiAzYCACAAIAJBA3ZBPHFqQShqIgIgAUH/AXEgAigCAEEIdHI2AgACQAJAIANFBEAgAEEANgIAIAAgACgCBEEBajYCBAwBCyADQf8DcQ0BCyAAEA8LC1wAIABBOBDQASIAQQE2AjggAEFAa0E4ENABGiAAQfgAakEBNgIAIABBgAFqEFEgAEGAAmpBOBDQARogAEG4AmpBATYCACAAQcACakE4ENABGiAAQfgCakEBNgIAC1sBA38jAEGAAWsiASQAIAAQqQEgASAAEJABIAFBQGsiAiAAQUBrIgMQkAEgARBMIAIQTCABIAIQdyABQQAQMyAAIAEQSiABEEMgARBCIAMgARBKIAFBgAFqJAALYQEBfyMAQYACayIDJAAgABA9IAAgARCZASAAQYABaiIBIAIQmQEgAEGAAmoQtwEgABCpASADIAAQOCADQYABaiICIAEQXiACEC0gAiADEHpFBEAgABCbAQsgA0GAAmokAAtUAQF/IwBBIGsiAiQAIAIgACgCADYCBCACQRhqIAFBEGopAgA3AwAgAkEQaiABQQhqKQIANwMAIAIgASkCADcDCCACQQRqIAJBCGoQDCACQSBqJAALZwAjAEEwayIBJABBpLvAAC0AAARAIAFBHGpBATYCACABQgI3AgwgAUGQtsAANgIIIAFBATYCJCABIAA2AiwgASABQSBqNgIYIAEgAUEsajYCICABQQhqQbi2wAAQZgALIAFBMGokAAtiAgF+An8gACkDACEBA34gACACaiIDIAFC//////////8DgzcDACABQjqHIQEgAkEoRgR+IAAgACkDMCABfCIBNwMwIAFCJIcFIAJBCGohAiADQQhqKQMAIAF8IQEMAQsLGgt8AQV/IwBBQGoiAyQAIANBCGoiAkHAssAAEEkgAiAAKAI4QQFrEDUiBBAoA0AgAUE4RwRAIAAgAWoiBSABIAJqKQMAIAUpAwB9NwMAIAFBCGohAQwBCwsgAEEBIARBAWp0IgI2AjggAkH///8PSgRAIAAQHgsgA0FAayQAC3sBAn8gAEEoaiECA0AgAUGAAkYEQCAAQufMp9DW0Ouzu383AgggAEIANwIAIABBIGpCq7OP/JGjs/DbADcCACAAQRhqQv+kuYjFkdqCm383AgAgAEEQakLy5rvjo6f9p6V/NwIABSABIAJqQQA2AgAgAUEEaiEBDAELCwtUACAAQTgQ0AEiAEEBNgI4IABBQGtBOBDQARogAEH4AGpBATYCACAAQYABakE4ENABGiAAQbgBakEBNgIAIABBwAFqQTgQ0AEaIABB+AFqQQE2AgALWAECfyMAQUBqIgEkAAJAIAAQhgENACABQQEQOSAAQYABaiICIAEQWA0AIAJBABAzIAAgAhBKIAAQHiAAQUBrIgAgAhBKIAAQHiACIAEQrgELIAFBQGskAAtZAQJ/IwBBgAFrIgEkAAJAIAAQigENACABEFEgAEGAAmoiAiABEHoNACACED4gACACEBEgABC1ASAAQYABaiIAIAIQESAAELUBIAIgARCZAQsgAUGAAWokAAtbAgF+An8gACkDACEBA0AgACACaiIDIAFC//////////8DgzcDACABQjqHIQEgAkHgAEYEQCAAIAApA2ggAXw3A2gFIAJBCGohAiADQQhqKQMAIAF8IQEMAQsLC08BAX8gAEE4ENABGgJAA0AgAkEHRwRAIAJBB0YNAiAAIAEpAwA3AwAgAEEIaiEAIAFBCGohASACQQFqIQIMAQsLDwtBB0EHQeSawAAQOwALVAECfyMAQbABayICJAAgATQCOCAANAI4fkL///8PVQRAIAAQHgsgAkEIaiIDIAAgARAFIAJB+ABqIgEgAxBrIAAgARBqIABBAjYCOCACQbABaiQAC1EBAn8jAEFAaiIDJAAgAEE4ENABIgBBATYCOCAAQUBrQTgQ0AEgAEH4AGpBATYCACADIAEQjgEgACADEK4BIAMgAhCOASADEK4BIANBQGskAAvwDAIRfwh+IwBBsAFrIg8kACAANAI4IhIgEn5C////D1YEQCAAEB4LIwBB0AFrIgEkACAPQQhqIgZBCGpB0AAQ0AEaIAFBwAFqIAApAwAiFyAXQj+HIhYgFyAWEC8gBiABKQPAASISQv//////////A4M3AwAgAUHIAWopAwAiFUIGhiASQjqIhCETIBVCOoghGCAAQQhqIgwhDSAAIQlBASEKQQEhBwJAA0AgCkEERgRAIABBGGohCiAAQRBqIQkgAEEoaiEMIAApAzAhF0EHIQUgAUHIAGohCwNAIAVBC0kEQCABQUBrIAVBA3QiCCAAakEwaykDACISIBJCP4cgFyAXQj+HIhYQLyAFQQFqIg1BAXYhByALKQMAIRUgASkDQCESIAkhAiAMIQQgBUEFayIOIQMDQCADIAdJBEAgASACKQMAIhQgFEI/hyAEKQMAIhQgFEI/hxAvIAEpAwAiFCASfCISIBRUrSABQQhqKQMAIBV8fCEVIAJBCGohAiAEQQhrIQQgA0EBaiEDDAELCyAGIAhqIBJCAYYiFCATfCITQv//////////A4M3AwAgAUEwaiAAIA5BA3RqKQMAIhkgGUI/hyAXIBYQLyATIBRU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aikDADcDACACQQhqIQIMAQsLC4QJAg1/Cn4jAEFAaiILJAAgC0EIaiIJQcCywAAQSSMAQZACayICJAAgAEEwENABIQogAkHoAGpB8AAQ0AEaIAJB4AFqQTAQ0AEaIAoQcSACIAEiDCkDACIQQv3/8//P///5AX5C//////////8DgyISNwPYASACQdgAaiASQgAgCSkDACIXIBdCP4ciGBAvIBAgAikDWCIPfCITIA9UrSACQeAAaikDACAQQj+HfHwiEEI6hyABKQMIIg9CP4d8IA8gEEIGhiATQjqIhCITfCIQIBNUrXwhD0EBIQBCACETAkACQANAAkAgAEEHRgRAQQYhB0EAIQhBByEADAELIABBAXYiAUEBaiEGIAggAWshAyABQQN0IgFBCGohBCAHIAFrIQUgAkHIAGogCSAAQQN0Ig1qKQMAIhUgFUI/hyIWIBJCABAvIAJB0ABqKQMAIBAgECATfCIRVq0gDyAUfHx8IBEgAikDSHwiDyARVK18IRAgAEEBaiEBA0AgACAGTQRAIAJB2AFqIA1qIA9C/f/z/8////kBfkL//////////wODIhE3AwAgAkE4aiARQgAgFyAYEC8gAkEoaiARQgAgFSAWEC8gAkHoAGogAEEEdGoiACACQTBqKQMAIhE3AwggACACKQMoIhU3AwAgDyACKQM4IhZ8Ig8gFlStIAJBQGspAwAgEHx8IhBCOocgDCABQQN0aikDACIWQj+HfCAWIBBCBoYgD0I6iIQiD3wiECAPVK18IQ8gEyAVfCITIBVUrSARIBR8fCEUIAdBCGohByAIQQFqIQggASEADAMLIANBB08NAyACQRhqIAQgCWopAwAgBSAJaikDAH0iESARQj+HIAJB2AFqIg4gBWopAwAgBCAOaikDAH0iESARQj+HEC8gAikDGCIRIA98Ig8gEVStIAJBIGopAwAgEHx8IRAgBkEBaiEGIARBCGohBCAFQQhrIQUgA0EBayEDDAALAAsLA0ACQAJAIABBDUcEQCAHIABBAXYiBmshAyAIIAZBA3QiAWshBCABQQhqIQUgDyAUfCAQIBN8Ig8gEFStfCEQIABBAWohAQNAIAZBBUsNAyADQQdPDQIgAkEIaiAFIAlqKQMAIAQgCWpBMGopAwB9IhIgEkI/hyACIARqQYgCaikDACACQdgBaiAFaikDAH0iEiASQj+HEC8gAikDCCISIA98Ig8gElStIAJBEGopAwAgEHx8IRAgBkEBaiEGIARBCGshBCADQQFrIQMgBUEIaiEFDAALAAsgCiAQQv//////////A4M3AzAgAkGQAmokAAwECyADQQdBpJzAABA7AAsgAEEDdCAKakE4ayAPQv//////////A4M3AwAgEEI6hyAMIAFBA3RqKQMAIhJCP4d8IBIgEEIGhiAPQjqIhCIPfCIQIA9UrXwhDyAUIABBBHQgAmpBCGoiAEEIaikDAH0gEyAAKQMAIhJUrX0hFCAIQQhqIQggB0EBaiEHIBMgEn0hEyABIQAMAAsACyADQQdBlJzAABA7AAsgC0FAayQACy4BAX8jAEGAAWsiASQAIAAQRSABEFEgACABEJkBIABBgAFqELYBIAFBgAFqJAALMwAgACABEJYBIABBgAJqIAFBgAJqEJYBIABBgARqIAFBgARqEJYBIAAgASgCgAY2AoAGCygAIAAgASACEHIgAEFAayABQUBrIAIQciAAQYABaiABQYABaiACEHILLQAgACABIAIQjQEgAEGAAWogAUGAAWogAhCNASAAQYACaiABQYACaiACEI0BCycBAn8jAEFAaiICJAAgAkEIaiIDIAEQvgEgACADEI4BIAJBQGskAAsiAQF/A0AgAUE4RwRAIAAgAWpCADcDACABQQhqIQEMAQsLCyUAIAAgASACEDAgAEEAIAJrIAAoAjgiACABKAI4c3EgAHM2AjgLJwAgACAAKAIEQQFxIAFyQQJyNgIEIAAgAWoiACAAKAIEQQFyNgIECyMAA0AgAgRAIAAgAS0AABA8IAJBAWshAiABQQFqIQEMAQsLCywAIAAQiwEgACABEJYBIABBgAJqIAIQlgEgAEGABGogAxCWASAAQQU2AoAGCyMBAX8jAEFAaiIBJAAgASAAEJABIAEQHiABEFcgAUFAayQACykAIAAgARBgIAAgACgCOCABKAI4aiIBNgI4IAFB////D0oEQCAAEB4LCyUAIAAgARCuASAAQUBrIAFBQGsQrgEgAEGAAWogAUGAAWoQrgELKAEBfyMAQYACayICJAAgAiABEIwBIAIQKyAAIAIQlwEgAkGAAmokAAscAQF/IAAgARBYBH8gAEFAayABQUBrEFgFQQALCycBAX8jAEGAAWsiAiQAIAIg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DCELDQALCyAMpyICQeMASwRAIABBAmsiACAGQQlqaiAMpyICIAJB//8DcUHkAG4iAkHkAGxrQf//A3FBAXRB6LjAAGovAAA7AAALAkAgAkEKTwRAIABBAmsiACAGQQlqaiACQQF0Qei4wABqLwAAOwAADAELIABBAWsiACAGQQlqaiACQTBqOgAACwJ/IAZBCWogAGohCEErQYCAxAAgASgCACIDQQFxIgIbIQQgAkEnIABrIglqIQJBlLjAAEEAIANBBHEbIQUCQAJAIAEoAghFBEBBASEAIAEgBCAFEFINAQwCCwJAAkACQAJAIAIgAUEMaigCACIDSQRAIAEtAABBCHENBEEAIQAgAyACayICIQNBASABLQAgIgcgB0EDRhtBA3FBAWsOAgECAwtBASEAIAEgBCAFEFINBAwFC0EAIQMgAiEADAELIAJBAXYhACACQQFqQQF2IQMLIABBAWohACABQRxqKAIAIQcgASgCBCECIAEoAhghCgJAA0AgAEEBayIARQ0BIAogAiAHKAIQEQQARQ0AC0EBDAQLQQEhACACQYCAxABGDQEgASAEIAUQUg0BIAEoAhggCCAJIAEoAhwoAgwRBQANASABKAIcIQQgASgCGCEBQQAhAAJ/A0AgAyAAIANGDQEaIABBAWohACABIAIgBCgCEBEEAEUNAAsgAEEBawsgA0khAAwBCyABKAIEIQcgAUEwNgIEIAEtACAhCkEBIQAgAUEBOgAgIAEgBCAFEFINAEEAIQAgAyACayICIQMCQAJAAkBBASABLQAgIgQgBEEDRhtBA3FBAWsOAgABAgtBACEDIAIhAAwBCyACQQF2IQAgAkEBakEBdiEDCyAAQQFqIQAgAUEcaigCACECIAEoAgQhBCABKAIYIQUCQANAIABBAWsiAEUNASAFIAQgAigCEBEEAEUNAAtBAQwDC0EBIQAgBEGAgMQARg0AIAEoAhggCCAJIAEoAhwoAgwRBQANACABKAIcIQAgASgCGCEFQQAhAgJAA0AgAiADRg0BIAJBAWohAiAFIAQgACgCEBEEAEUNAAtBASEAIAJBAWsgA0kNAQsgASAKOgAgIAEgBzYCBEEADAILIAAMAQsgASgCGCAIIAkgAUEcaigCACgCDBEFAAsgBkEwaiQACwsAIAAQNiAAELABCysCAX8BfkIBIQIDQCAAIAFq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AAANAEHgs8AAC8EHYXR0ZW1wdCB0byBkaXZpZGUgYnkgemVybwAAAAAAAABhdHRlbXB0IHRvIGRpdmlkZSB3aXRoIG92ZXJmbG93ALAZEAASAAAADAIAAA0AAACwGRAAEgAAABgCAAAmAAAAsBkQABIAAAAYAgAAIwAAALAZEAASAAAAHgIAABcAAACwGRAAEgAAAB4CAAAUAAAAqqr//////gHu//9UrP//AupBYg9rDyoBw5z9ShTOEwJLd2TXrEtDAu3pxpKm+V8Cox4RoAEAAAADAAAABAAAAAQAAAAEAAAABQAAAAYAAABjYWxsZWQgYE9wdGlvbjo6dW53cmFwKClgIG9uIGEgYE5vbmVgIHZhbHVlbWVtb3J5IGFsbG9jYXRpb24gb2YgIGJ5dGVzIGZhaWxlZAoAAOsaEAAVAAAAABsQAA4AAABsaWJyYXJ5L3N0ZC9zcmMvYWxsb2MucnMgGxAAGAAAAEkBAAAJAAAAbGlicmFyeS9zdGQvc3JjL3Bhbmlja2luZy5yc0gbEAAcAAAARgIAAB8AAABIGxAAHAAAAEcCAAAeAAAABwAAAAwAAAAEAAAACAAAAAMAAAAIAAAABAAAAAkAAAAKAAAAEAAAAAQAAAALAAAADAAAAAMAAAAIAAAABAAAAA0AAAAOAAAAbGlicmFyeS9hbGxvYy9zcmMvcmF3X3ZlYy5yc2NhcGFjaXR5IG92ZXJmbG93AAAA6BsQABEAAADMGxAAHAAAAAUCAAAFAAAAEAAAAAAAAAABAAAAEQAAAGluZGV4IG91dCBvZiBib3VuZHM6IHRoZSBsZW4gaXMgIGJ1dCB0aGUgaW5kZXggaXMgAAAkHBAAIAAAAEQcEAASAAAAMDAwMTAyMDMwNDA1MDYwNzA4MDkxMDExMTIxMzE0MTUxNjE3MTgxOTIwMjEyMjIzMjQyNTI2MjcyODI5MzAzMTMyMzMzNDM1MzYzNzM4Mzk0MDQxNDI0MzQ0NDU0NjQ3NDg0OTUwNTE1MjUzNTQ1NTU2NTc1ODU5NjA2MTYyNjM2NDY1NjY2NzY4Njk3MDcxNzI3Mzc0NzU3Njc3Nzg3OTgwODE4MjgzODQ4NTg2ODc4ODg5OTA5MTkyOTM5NDk1OTY5Nzk4OTkgb3V0IG9mIHJhbmdlIGZvciBzbGljZSBvZiBsZW5ndGggbGlicmFyeS9jb3JlL3NyYy9zbGljZS9pbmRleC5yc3JhbmdlIGVuZCBpbmRleCAAAABxHRAAEAAAADAdEAAiAAAAUh0QAB8AAABJAAAABQB7CXByb2R1Y2VycwIIbGFuZ3VhZ2UBBFJ1c3QADHByb2Nlc3NlZC1ieQMFcnVzdGMdMS42MS4wIChmZTViMTNkNjggMjAyMi0wNS0xOCkGd2FscnVzBjAuMTkuMAx3YXNtLWJpbmRnZW4SMC4yLjgxICgwNjJhYTVmNzAp`;
-//# sourceMappingURL=wasm.js.map
-
-/***/ }),
-
 /***/ "./node_modules/@dfinity/auth-client/lib/esm/db.js":
 /*!*********************************************************!*\
   !*** ./node_modules/@dfinity/auth-client/lib/esm/db.js ***!
@@ -3868,7 +3942,7 @@ class IdbKeyVal {
      * @constructs an {@link IdbKeyVal}
      */
     static async create(options) {
-        const { dbName = AUTH_DB_NAME, storeName = OBJECT_STORE_NAME, version = 1 } = options !== null && options !== void 0 ? options : {};
+        const { dbName = AUTH_DB_NAME, storeName = OBJECT_STORE_NAME, version = _storage__WEBPACK_IMPORTED_MODULE_1__.DB_VERSION } = options !== null && options !== void 0 ? options : {};
         const db = await _openDbStore(dbName, storeName, version);
         return new IdbKeyVal(db, storeName);
     }
@@ -4244,7 +4318,7 @@ class AuthClient {
         }
         // onSuccess should be the last thing to do to avoid consumers
         // interfering by navigating or refreshing the page
-        onSuccess === null || onSuccess === void 0 ? void 0 : onSuccess();
+        onSuccess === null || onSuccess === void 0 ? void 0 : onSuccess(message);
     }
     getIdentity() {
         return this._identity;
@@ -4258,6 +4332,7 @@ class AuthClient {
      * @param {AuthClientLoginOptions} options - Options for logging in
      * @param options.identityProvider Identity provider
      * @param options.maxTimeToLive Expiration of the authentication in nanoseconds
+     * @param options.allowPinAuthentication If present, indicates whether or not the Identity Provider should allow the user to authenticate and/or register using a temporary key/PIN identity. Authenticating dapps may want to prevent users from using Temporary keys/PIN identities because Temporary keys/PIN identities are less secure than Passkeys (webauthn credentials) and because Temporary keys/PIN identities generally only live in a browser database (which may get cleared by the browser/OS).
      * @param options.derivationOrigin Origin for Identity Provider to use while generating the delegated identity
      * @param options.windowOpenerFeatures Configures the opened authentication window
      * @param options.onSuccess Callback once login has completed
@@ -4319,12 +4394,7 @@ class AuthClient {
             switch (message.kind) {
                 case 'authorize-ready': {
                     // IDP is ready. Send a message to request authorization.
-                    const request = {
-                        kind: 'authorize-client',
-                        sessionPublicKey: new Uint8Array((_a = this._key) === null || _a === void 0 ? void 0 : _a.getPublicKey().toDer()),
-                        maxTimeToLive: options === null || options === void 0 ? void 0 : options.maxTimeToLive,
-                        derivationOrigin: (_b = options === null || options === void 0 ? void 0 : options.derivationOrigin) === null || _b === void 0 ? void 0 : _b.toString(),
-                    };
+                    const request = Object.assign({ kind: 'authorize-client', sessionPublicKey: new Uint8Array((_a = this._key) === null || _a === void 0 ? void 0 : _a.getPublicKey().toDer()), maxTimeToLive: options === null || options === void 0 ? void 0 : options.maxTimeToLive, allowPinAuthentication: options === null || options === void 0 ? void 0 : options.allowPinAuthentication, derivationOrigin: (_b = options === null || options === void 0 ? void 0 : options.derivationOrigin) === null || _b === void 0 ? void 0 : _b.toString() }, options === null || options === void 0 ? void 0 : options.customValues);
                     (_c = this._idpWindow) === null || _c === void 0 ? void 0 : _c.postMessage(request, identityProviderUrl.origin);
                     break;
                 }
@@ -4400,6 +4470,18 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   isBrowser: () => (/* binding */ isBrowser)
 /* harmony export */ });
 /* harmony import */ var _db__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./db */ "./node_modules/@dfinity/auth-client/lib/esm/db.js");
+var __classPrivateFieldSet = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _IdbStorage_options;
 
 const KEY_STORAGE_KEY = 'identity';
 const KEY_STORAGE_DELEGATION = 'delegation';
@@ -4450,13 +4532,28 @@ class LocalStorage {
  * @see implements {@link AuthClientStorage}
  */
 class IdbStorage {
+    /**
+     * @param options - DBCreateOptions
+     * @param options.dbName - name for the indexeddb database
+     * @param options.storeName - name for the indexeddb Data Store
+     * @param options.version - version of the database. Increment to safely upgrade
+     * @constructs an {@link IdbStorage}
+     * @example
+     * ```typescript
+     * const storage = new IdbStorage({ dbName: 'my-db', storeName: 'my-store', version: 2 });
+     * ```
+     */
+    constructor(options) {
+        _IdbStorage_options.set(this, void 0);
+        __classPrivateFieldSet(this, _IdbStorage_options, options !== null && options !== void 0 ? options : {}, "f");
+    }
     get _db() {
         return new Promise(resolve => {
             if (this.initializedDb) {
                 resolve(this.initializedDb);
                 return;
             }
-            _db__WEBPACK_IMPORTED_MODULE_0__.IdbKeyVal.create({ version: DB_VERSION }).then(db => {
+            _db__WEBPACK_IMPORTED_MODULE_0__.IdbKeyVal.create(__classPrivateFieldGet(this, _IdbStorage_options, "f")).then(db => {
                 this.initializedDb = db;
                 resolve(db);
             });
@@ -4476,6 +4573,7 @@ class IdbStorage {
         await db.remove(key);
     }
 }
+_IdbStorage_options = new WeakMap();
 //# sourceMappingURL=storage.js.map
 
 /***/ }),
@@ -7027,10 +7125,13 @@ function bufFromBufLike(bufLike) {
     if (bufLike instanceof ArrayBuffer) {
         return bufLike;
     }
-    if ('buffer' in bufLike) {
-        return bufLike.buffer;
+    if (Array.isArray(bufLike)) {
+        return uint8ToBuf(new Uint8Array(bufLike));
     }
-    return new Uint8Array(bufLike);
+    if ('buffer' in bufLike) {
+        return bufFromBufLike(bufLike.buffer);
+    }
+    return uint8ToBuf(new Uint8Array(bufLike));
 }
 //# sourceMappingURL=buffer.js.map
 
@@ -8072,7 +8173,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var _dfinity_agent__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/agent */ "./node_modules/@dfinity/agent/lib/esm/index.js");
 /* harmony import */ var borc__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! borc */ "./node_modules/borc/src/index.js");
-/* harmony import */ var _noble_hashes_utils__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @noble/hashes/utils */ "./node_modules/@noble/hashes/esm/utils.js");
+/* harmony import */ var _noble_hashes_utils__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! @noble/hashes/utils */ "./node_modules/@noble/hashes/esm/utils.js");
+/* harmony import */ var _dfinity_candid__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @dfinity/candid */ "./node_modules/@dfinity/candid/lib/esm/index.js");
+
 
 
 
@@ -8144,20 +8247,25 @@ async function _createCredential(credentialCreationOptions) {
                 name: 'Internet Identity Service',
             },
             user: {
-                id: (0,_noble_hashes_utils__WEBPACK_IMPORTED_MODULE_2__.randomBytes)(16),
+                id: (0,_noble_hashes_utils__WEBPACK_IMPORTED_MODULE_3__.randomBytes)(16),
                 name: 'Internet Identity',
                 displayName: 'Internet Identity',
             },
         },
     }));
-    // Validate that it's the correct type at runtime, since WebAuthn does not HAVE to
-    // reply with a PublicKeyCredential.
-    if (creds.response === undefined || !(creds.rawId instanceof ArrayBuffer)) {
+    if (creds === null) {
         return null;
     }
-    else {
-        return creds;
-    }
+    return {
+        // do _not_ use ...creds here, as creds is not enumerable in all cases
+        id: creds.id,
+        response: creds.response,
+        type: creds.type,
+        authenticatorAttachment: creds.authenticatorAttachment,
+        getClientExtensionResults: creds.getClientExtensionResults,
+        // Some password managers will return a Uint8Array, so we ensure we return an ArrayBuffer.
+        rawId: (0,_dfinity_candid__WEBPACK_IMPORTED_MODULE_2__.bufFromBufLike)(creds.rawId),
+    };
 }
 // See https://www.iana.org/assignments/cose/cose.xhtml#algorithms for a complete
 // list of these algorithms. We only list the ones we support here.
@@ -8198,7 +8306,7 @@ class WebAuthnIdentity extends _dfinity_agent__WEBPACK_IMPORTED_MODULE_0__.SignI
             throw new Error('Could not create credentials.');
         }
         const response = creds.response;
-        if (!(response.attestationObject instanceof ArrayBuffer)) {
+        if (response.attestationObject === undefined) {
             throw new Error('Was expecting an attestation response.');
         }
         // Parse the attestationObject as CBOR.
@@ -8236,21 +8344,15 @@ class WebAuthnIdentity extends _dfinity_agent__WEBPACK_IMPORTED_MODULE_0__.SignI
             this.authenticatorAttachment = result.authenticatorAttachment;
         }
         const response = result.response;
-        if (response.signature instanceof ArrayBuffer &&
-            response.authenticatorData instanceof ArrayBuffer) {
-            const cbor = borc__WEBPACK_IMPORTED_MODULE_1__.encode(new borc__WEBPACK_IMPORTED_MODULE_1__.Tagged(55799, {
-                authenticator_data: new Uint8Array(response.authenticatorData),
-                client_data_json: new TextDecoder().decode(response.clientDataJSON),
-                signature: new Uint8Array(response.signature),
-            }));
-            if (!cbor) {
-                throw new Error('failed to encode cbor');
-            }
-            return cbor.buffer;
+        const cbor = borc__WEBPACK_IMPORTED_MODULE_1__.encode(new borc__WEBPACK_IMPORTED_MODULE_1__.Tagged(55799, {
+            authenticator_data: new Uint8Array(response.authenticatorData),
+            client_data_json: new TextDecoder().decode(response.clientDataJSON),
+            signature: new Uint8Array(response.signature),
+        }));
+        if (!cbor) {
+            throw new Error('failed to encode cbor');
         }
-        else {
-            throw new Error('Invalid response from WebAuthn.');
-        }
+        return cbor.buffer;
     }
     /**
      * Allow for JSON serialization of all information needed to reuse this identity.
@@ -8313,37 +8415,6 @@ class Secp256k1KeyIdentity {
     }
 }
 //# sourceMappingURL=index.js.map
-
-/***/ }),
-
-/***/ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-IGRXF4KV.js":
-/*!*********************************************************************!*\
-  !*** ./node_modules/@dfinity/ledger-icp/dist/esm/chunk-IGRXF4KV.js ***!
-  \*********************************************************************/
-/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
-
-"use strict";
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   a: () => (/* binding */ f),
-/* harmony export */   b: () => (/* binding */ ie),
-/* harmony export */   c: () => (/* binding */ Ne),
-/* harmony export */   d: () => (/* binding */ A),
-/* harmony export */   e: () => (/* binding */ v),
-/* harmony export */   f: () => (/* binding */ k),
-/* harmony export */   g: () => (/* binding */ V),
-/* harmony export */   h: () => (/* binding */ E),
-/* harmony export */   i: () => (/* binding */ Te),
-/* harmony export */   j: () => (/* binding */ ye),
-/* harmony export */   k: () => (/* binding */ be),
-/* harmony export */   l: () => (/* binding */ xe)
-/* harmony export */ });
-/* harmony import */ var _chunk_K5HBSDBC_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./chunk-K5HBSDBC.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-K5HBSDBC.js");
-/* harmony import */ var _chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./chunk-NT3CN7HG.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-NT3CN7HG.js");
-/* harmony import */ var _dfinity_utils__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @dfinity/utils */ "./node_modules/@dfinity/utils/dist/esm/index.js");
-var _e=({IDL:e})=>{let r=e.Vec(e.Nat8),t=e.Record({owner:e.Principal,subaccount:e.Opt(r)}),a=e.Record({icrc2:e.Bool}),i=e.Record({maximum_number_of_accounts:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),feature_flags:e.Opt(a)}),c=e.Record({e8s:e.Nat64}),u=e.Text,g=e.Record({secs:e.Nat64,nanos:e.Nat32}),x=e.Record({num_blocks_to_archive:e.Nat64,max_transactions_per_response:e.Opt(e.Nat64),trigger_threshold:e.Nat64,max_message_size_bytes:e.Opt(e.Nat64),cycles_for_archive_creation:e.Opt(e.Nat64),node_max_memory_size_bytes:e.Opt(e.Nat64),controller_id:e.Principal}),h=e.Record({send_whitelist:e.Vec(e.Principal),token_symbol:e.Opt(e.Text),transfer_fee:e.Opt(c),minting_account:u,maximum_number_of_accounts:e.Opt(e.Nat64),accounts_overflow_trim_quantity:e.Opt(e.Nat64),transaction_window:e.Opt(g),max_message_size_bytes:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),archive_options:e.Opt(x),initial_values:e.Vec(e.Tuple(u,c)),token_name:e.Opt(e.Text),feature_flags:e.Opt(a)}),q=e.Variant({Upgrade:e.Opt(i),Init:h}),o=e.Vec(e.Nat8),_=e.Record({account:o}),T=e.Record({account:u}),y=e.Record({canister_id:e.Principal}),p=e.Record({archives:e.Vec(y)}),n=e.Nat,P=e.Variant({Int:e.Int,Nat:e.Nat,Blob:e.Vec(e.Nat8),Text:e.Text}),d=e.Nat64,C=e.Record({to:t,fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n}),l=e.Nat,S=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),U=e.Variant({Ok:l,Err:S}),z=e.Record({account:t,spender:t}),M=e.Record({allowance:n,expires_at:e.Opt(d)}),H=e.Record({fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n,expected_allowance:e.Opt(n),expires_at:e.Opt(d),spender:t}),G=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),AllowanceChanged:e.Record({current_allowance:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,Expired:e.Record({ledger_time:e.Nat64}),InsufficientFunds:e.Record({balance:n})}),Q=e.Variant({Ok:l,Err:G}),W=e.Record({to:t,fee:e.Opt(n),spender_subaccount:e.Opt(r),from:t,memo:e.Opt(e.Vec(e.Nat8)),created_at_time:e.Opt(d),amount:n}),J=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,InsufficientAllowance:e.Record({allowance:n}),BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:d}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),$=e.Variant({Ok:l,Err:J}),s=e.Nat64,R=e.Record({start:s,length:e.Nat64}),O=e.Nat64,m=e.Record({timestamp_nanos:e.Nat64}),j=e.Variant({Approve:e.Record({fee:c,from:o,allowance_e8s:e.Int,allowance:c,expected_allowance:e.Opt(c),expires_at:e.Opt(m),spender:o}),Burn:e.Record({from:o,amount:c,spender:e.Opt(o)}),Mint:e.Record({to:o,amount:c}),Transfer:e.Record({to:o,fee:c,from:o,amount:c,spender:e.Opt(e.Vec(e.Nat8))})}),K=e.Record({memo:O,icrc1_memo:e.Opt(e.Vec(e.Nat8)),operation:e.Opt(j),created_at_time:m}),F=e.Record({transaction:K,timestamp:m,parent_hash:e.Opt(e.Vec(e.Nat8))}),Y=e.Record({blocks:e.Vec(F)}),w=e.Variant({BadFirstBlockIndex:e.Record({requested_index:s,first_valid_index:s}),Other:e.Record({error_message:e.Text,error_code:e.Nat64})}),X=e.Variant({Ok:Y,Err:w}),Z=e.Func([R],[X],[]),I=e.Record({callback:Z,start:s,length:e.Nat64}),D=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(F),chain_length:e.Nat64,first_block_index:s,archived_blocks:e.Vec(I)}),L=e.Record({callback:e.Func([R],[e.Variant({Ok:e.Vec(e.Vec(e.Nat8)),Err:w})],[]),start:e.Nat64,length:e.Nat64}),ee=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(e.Vec(e.Nat8)),chain_length:e.Nat64,first_block_index:e.Nat64,archived_blocks:e.Vec(L)}),te=e.Record({to:u,fee:c,memo:O,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),re=e.Record({to:o,fee:c,memo:O,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),ce=e.Variant({TxTooOld:e.Record({allowed_window_nanos:e.Nat64}),BadFee:e.Record({expected_fee:c}),TxDuplicate:e.Record({duplicate_of:s}),TxCreatedInFuture:e.Null,InsufficientFunds:e.Record({balance:c})}),ne=e.Variant({Ok:s,Err:ce}),ae=e.Record({}),oe=e.Record({transfer_fee:c});return e.Service({account_balance:e.Func([_],[c],[]),account_balance_dfx:e.Func([T],[c],[]),account_identifier:e.Func([t],[o],[]),archives:e.Func([],[p],[]),decimals:e.Func([],[e.Record({decimals:e.Nat32})],[]),icrc1_balance_of:e.Func([t],[n],[]),icrc1_decimals:e.Func([],[e.Nat8],[]),icrc1_fee:e.Func([],[n],[]),icrc1_metadata:e.Func([],[e.Vec(e.Tuple(e.Text,P))],[]),icrc1_minting_account:e.Func([],[e.Opt(t)],[]),icrc1_name:e.Func([],[e.Text],[]),icrc1_supported_standards:e.Func([],[e.Vec(e.Record({url:e.Text,name:e.Text}))],[]),icrc1_symbol:e.Func([],[e.Text],[]),icrc1_total_supply:e.Func([],[n],[]),icrc1_transfer:e.Func([C],[U],[]),icrc2_allowance:e.Func([z],[M],[]),icrc2_approve:e.Func([H],[Q],[]),icrc2_transfer_from:e.Func([W],[$],[]),name:e.Func([],[e.Record({name:e.Text})],[]),query_blocks:e.Func([R],[D],[]),query_encoded_blocks:e.Func([R],[ee],[]),send_dfx:e.Func([te],[s],[]),symbol:e.Func([],[e.Record({symbol:e.Text})],[]),transfer:e.Func([re],[ne],[]),transfer_fee:e.Func([ae],[oe],[])})};var me=({IDL:e})=>{let r=e.Vec(e.Nat8),t=e.Record({owner:e.Principal,subaccount:e.Opt(r)}),a=e.Record({icrc2:e.Bool}),i=e.Record({maximum_number_of_accounts:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),feature_flags:e.Opt(a)}),c=e.Record({e8s:e.Nat64}),u=e.Text,g=e.Record({secs:e.Nat64,nanos:e.Nat32}),x=e.Record({num_blocks_to_archive:e.Nat64,max_transactions_per_response:e.Opt(e.Nat64),trigger_threshold:e.Nat64,max_message_size_bytes:e.Opt(e.Nat64),cycles_for_archive_creation:e.Opt(e.Nat64),node_max_memory_size_bytes:e.Opt(e.Nat64),controller_id:e.Principal}),h=e.Record({send_whitelist:e.Vec(e.Principal),token_symbol:e.Opt(e.Text),transfer_fee:e.Opt(c),minting_account:u,maximum_number_of_accounts:e.Opt(e.Nat64),accounts_overflow_trim_quantity:e.Opt(e.Nat64),transaction_window:e.Opt(g),max_message_size_bytes:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),archive_options:e.Opt(x),initial_values:e.Vec(e.Tuple(u,c)),token_name:e.Opt(e.Text),feature_flags:e.Opt(a)}),q=e.Variant({Upgrade:e.Opt(i),Init:h}),o=e.Vec(e.Nat8),_=e.Record({account:o}),T=e.Record({account:u}),y=e.Record({canister_id:e.Principal}),p=e.Record({archives:e.Vec(y)}),n=e.Nat,P=e.Variant({Int:e.Int,Nat:e.Nat,Blob:e.Vec(e.Nat8),Text:e.Text}),d=e.Nat64,C=e.Record({to:t,fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n}),l=e.Nat,S=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),U=e.Variant({Ok:l,Err:S}),z=e.Record({account:t,spender:t}),M=e.Record({allowance:n,expires_at:e.Opt(d)}),H=e.Record({fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n,expected_allowance:e.Opt(n),expires_at:e.Opt(d),spender:t}),G=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),AllowanceChanged:e.Record({current_allowance:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,Expired:e.Record({ledger_time:e.Nat64}),InsufficientFunds:e.Record({balance:n})}),Q=e.Variant({Ok:l,Err:G}),W=e.Record({to:t,fee:e.Opt(n),spender_subaccount:e.Opt(r),from:t,memo:e.Opt(e.Vec(e.Nat8)),created_at_time:e.Opt(d),amount:n}),J=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,InsufficientAllowance:e.Record({allowance:n}),BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:d}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),$=e.Variant({Ok:l,Err:J}),s=e.Nat64,R=e.Record({start:s,length:e.Nat64}),O=e.Nat64,m=e.Record({timestamp_nanos:e.Nat64}),j=e.Variant({Approve:e.Record({fee:c,from:o,allowance_e8s:e.Int,allowance:c,expected_allowance:e.Opt(c),expires_at:e.Opt(m),spender:o}),Burn:e.Record({from:o,amount:c,spender:e.Opt(o)}),Mint:e.Record({to:o,amount:c}),Transfer:e.Record({to:o,fee:c,from:o,amount:c,spender:e.Opt(e.Vec(e.Nat8))})}),K=e.Record({memo:O,icrc1_memo:e.Opt(e.Vec(e.Nat8)),operation:e.Opt(j),created_at_time:m}),F=e.Record({transaction:K,timestamp:m,parent_hash:e.Opt(e.Vec(e.Nat8))}),Y=e.Record({blocks:e.Vec(F)}),w=e.Variant({BadFirstBlockIndex:e.Record({requested_index:s,first_valid_index:s}),Other:e.Record({error_message:e.Text,error_code:e.Nat64})}),X=e.Variant({Ok:Y,Err:w}),Z=e.Func([R],[X],["query"]),I=e.Record({callback:Z,start:s,length:e.Nat64}),D=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(F),chain_length:e.Nat64,first_block_index:s,archived_blocks:e.Vec(I)}),L=e.Record({callback:e.Func([R],[e.Variant({Ok:e.Vec(e.Vec(e.Nat8)),Err:w})],["query"]),start:e.Nat64,length:e.Nat64}),ee=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(e.Vec(e.Nat8)),chain_length:e.Nat64,first_block_index:e.Nat64,archived_blocks:e.Vec(L)}),te=e.Record({to:u,fee:c,memo:O,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),re=e.Record({to:o,fee:c,memo:O,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),ce=e.Variant({TxTooOld:e.Record({allowed_window_nanos:e.Nat64}),BadFee:e.Record({expected_fee:c}),TxDuplicate:e.Record({duplicate_of:s}),TxCreatedInFuture:e.Null,InsufficientFunds:e.Record({balance:c})}),ne=e.Variant({Ok:s,Err:ce}),ae=e.Record({}),oe=e.Record({transfer_fee:c});return e.Service({account_balance:e.Func([_],[c],["query"]),account_balance_dfx:e.Func([T],[c],["query"]),account_identifier:e.Func([t],[o],["query"]),archives:e.Func([],[p],["query"]),decimals:e.Func([],[e.Record({decimals:e.Nat32})],["query"]),icrc1_balance_of:e.Func([t],[n],["query"]),icrc1_decimals:e.Func([],[e.Nat8],["query"]),icrc1_fee:e.Func([],[n],["query"]),icrc1_metadata:e.Func([],[e.Vec(e.Tuple(e.Text,P))],["query"]),icrc1_minting_account:e.Func([],[e.Opt(t)],["query"]),icrc1_name:e.Func([],[e.Text],["query"]),icrc1_supported_standards:e.Func([],[e.Vec(e.Record({url:e.Text,name:e.Text}))],["query"]),icrc1_symbol:e.Func([],[e.Text],["query"]),icrc1_total_supply:e.Func([],[n],["query"]),icrc1_transfer:e.Func([C],[U],[]),icrc2_allowance:e.Func([z],[M],["query"]),icrc2_approve:e.Func([H],[Q],[]),icrc2_transfer_from:e.Func([W],[$],[]),name:e.Func([],[e.Record({name:e.Text})],["query"]),query_blocks:e.Func([R],[D],["query"]),query_encoded_blocks:e.Func([R],[ee],["query"]),send_dfx:e.Func([te],[s],[]),symbol:e.Func([],[e.Record({symbol:e.Text})],["query"]),transfer:e.Func([re],[ne],[]),transfer_fee:e.Func([ae],[oe],["query"])})};var ke=BigInt(1095062083),Ve=BigInt(1347768404),N=BigInt(1e4),Be=BigInt(1e8);var Re=async e=>{let r=new Uint8Array(e).buffer,{Subaccount:t}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),a=new t;return a.setSubAccount(new Uint8Array(r)),a},se=async e=>{let{ICPTs:r}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),t=new r;return t.setE8s(e.toString(10)),t},fe=e=>({e8s:e}),ge=({to:e,amount:r,memo:t,fee:a,fromSubAccount:i,createdAt:c})=>({to:e.toUint8Array(),fee:fe(a??N),amount:fe(r),memo:t??BigInt(0),created_at_time:c!==void 0?[{timestamp_nanos:c}]:[],from_subaccount:i===void 0?[]:[(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.arrayOfNumberToUint8Array)(i)]}),Oe=({fromSubAccount:e,to:r,amount:t,fee:a,icrc1Memo:i,createdAt:c})=>({to:r,fee:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(a??N),amount:t,memo:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(i),created_at_time:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(c),from_subaccount:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(e)});var f=class extends Error{},ie=class extends f{},Ne=class extends Error{},A=class extends f{constructor(t){super();this.balance=t}},v=class extends f{constructor(t){super();this.allowed_window_secs=t}},k=class extends f{},V=class extends f{constructor(t){super();this.duplicateOf=t}},E=class extends f{constructor(t){super();this.expectedFee=t}},Te=e=>"TxDuplicate"in e?new V(e.TxDuplicate.duplicate_of):"InsufficientFunds"in e?new A(e.InsufficientFunds.balance.e8s):"TxCreatedInFuture"in e?new k:"TxTooOld"in e?new v(Number(e.TxTooOld.allowed_window_nanos)):"BadFee"in e?new E(e.BadFee.expected_fee.e8s):new f(`Unknown error type ${JSON.stringify(e)}`),ye=e=>"Duplicate"in e?new V(e.Duplicate.duplicate_of):"InsufficientFunds"in e?new A(e.InsufficientFunds.balance):"CreatedInFuture"in e?new k:"TooOld"in e?new v:"BadFee"in e?new E(e.BadFee.expected_fee):new f(`Unknown error type ${JSON.stringify(e)}`),be=e=>{let{message:r}=e;if(r.includes("Reject code: 5")){if(r.match(/Sending from (.*) is not allowed/))return new ie;{let t=r.match(/transaction.*duplicate.* in block (\d+)/);if(t&&t.length>1)return new V(BigInt(t[1]))}{let t=r.match(/debit account.*, current balance: (\d*(\.\d*)?)/);if(t&&t.length>1){let a=(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.convertStringToE8s)(t[1]);if(typeof a=="bigint")return new A(a)}}if(r.includes("is in future"))return new k;{let t=r.match(/older than (\d+)/);if(t&&t.length>1)return new v(Number.parseInt(t[1]))}}throw e};var xe=class e{constructor(r,t,a,i,c,u,g=!1){this.agent=r;this.canisterId=t;this.service=a;this.certifiedService=i;this.updateFetcher=c;this.queryFetcher=u;this.hardwareWallet=g;this.accountBalance=async({accountIdentifier:r,certified:t=!0})=>{let a=(0,_chunk_K5HBSDBC_js__WEBPACK_IMPORTED_MODULE_0__.c)(r);return this.hardwareWallet?this.accountBalanceHardwareWallet({accountIdentifier:a,certified:t}):(await(t?this.certifiedService:this.service).account_balance({account:a.toUint8Array()})).e8s};this.transactionFee=async()=>{let{transfer_fee:{e8s:r}}=await this.service.transfer_fee({});return r};this.transfer=async r=>{if(this.hardwareWallet)return this.transferHardwareWallet(r);r.fee===void 0&&(r.fee=this.hardwareWallet?N:await this.transactionFee());let t=ge(r),a=await this.certifiedService.transfer(t);if("Err"in a)throw Te(a.Err);return a.Ok};this.icrc1Transfer=async r=>{r.fee===void 0&&(r.fee=this.hardwareWallet?N:await this.transactionFee());let t=Oe(r),a=await this.certifiedService.icrc1_transfer(t);if("Err"in a)throw ye(a.Err);return a.Ok};this.accountBalanceHardwareWallet=async({accountIdentifier:r,certified:t=!0})=>{let a=t?this.updateFetcher:this.queryFetcher,{AccountBalanceRequest:i,ICPTs:c}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),u=new i;u.setAccount(await r.toProto());let g=await a({agent:this.agent,canisterId:this.canisterId,methodName:"account_balance_pb",arg:u.serializeBinary()});return BigInt(c.deserializeBinary(new Uint8Array(g)).getE8s())};this.transferHardwareWallet=async({to:r,amount:t,memo:a,fee:i,fromSubAccount:c,createdAt:u})=>{let{SendRequest:g,Payment:x,Memo:h,TimeStamp:q,BlockHeight:o}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),_=new g;_.setTo(await r.toProto());let T=new x;T.setReceiverGets(await se(t)),_.setPayment(T),_.setMaxFee(await se(i??N));let y=new h;if(y.setMemo((a??BigInt(0)).toString()),_.setMemo(y),u!==void 0){let p=new q;p.setTimestampNanos(u.toString()),_.setCreatedAtTime(p)}c!==void 0&&_.setFromSubaccount(await Re(c));try{let p=await this.updateFetcher({agent:this.agent,canisterId:this.canisterId,methodName:"send_pb",arg:_.serializeBinary()});return BigInt(o.deserializeBinary(p).getHeight())}catch(p){throw p instanceof Error?be(p):p}}}static create(r={}){let t=r.canisterId??_chunk_K5HBSDBC_js__WEBPACK_IMPORTED_MODULE_0__.a,{service:a,certifiedService:i,agent:c}=(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.createServices)({options:{...r,canisterId:t},idlFactory:me,certifiedIdlFactory:_e});return new e(c,t,a,i,r.updateCallOverride??_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.e,r.queryCallOverride??_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.f,r.hardwareWallet)}};
-//# sourceMappingURL=chunk-IGRXF4KV.js.map
-
 
 /***/ }),
 
@@ -8423,6 +8494,37 @@ var A=({IDL:t})=>{let f=t.Record({ledger_id:t.Principal}),c=t.Record({max_result
 
 /***/ }),
 
+/***/ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-TE6WSMZS.js":
+/*!*********************************************************************!*\
+  !*** ./node_modules/@dfinity/ledger-icp/dist/esm/chunk-TE6WSMZS.js ***!
+  \*********************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   a: () => (/* binding */ f),
+/* harmony export */   b: () => (/* binding */ ie),
+/* harmony export */   c: () => (/* binding */ Ne),
+/* harmony export */   d: () => (/* binding */ A),
+/* harmony export */   e: () => (/* binding */ v),
+/* harmony export */   f: () => (/* binding */ V),
+/* harmony export */   g: () => (/* binding */ k),
+/* harmony export */   h: () => (/* binding */ E),
+/* harmony export */   i: () => (/* binding */ Te),
+/* harmony export */   j: () => (/* binding */ ye),
+/* harmony export */   k: () => (/* binding */ be),
+/* harmony export */   l: () => (/* binding */ xe)
+/* harmony export */ });
+/* harmony import */ var _chunk_K5HBSDBC_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./chunk-K5HBSDBC.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-K5HBSDBC.js");
+/* harmony import */ var _chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./chunk-NT3CN7HG.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-NT3CN7HG.js");
+/* harmony import */ var _dfinity_utils__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @dfinity/utils */ "./node_modules/@dfinity/utils/dist/esm/index.js");
+var _e=({IDL:e})=>{let r=e.Vec(e.Nat8),t=e.Record({owner:e.Principal,subaccount:e.Opt(r)}),a=e.Record({icrc2:e.Bool}),i=e.Record({maximum_number_of_accounts:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),feature_flags:e.Opt(a)}),c=e.Record({e8s:e.Nat64}),u=e.Text,O=e.Record({secs:e.Nat64,nanos:e.Nat32}),x=e.Record({num_blocks_to_archive:e.Nat64,max_transactions_per_response:e.Opt(e.Nat64),trigger_threshold:e.Nat64,more_controller_ids:e.Opt(e.Vec(e.Principal)),max_message_size_bytes:e.Opt(e.Nat64),cycles_for_archive_creation:e.Opt(e.Nat64),node_max_memory_size_bytes:e.Opt(e.Nat64),controller_id:e.Principal}),h=e.Record({send_whitelist:e.Vec(e.Principal),token_symbol:e.Opt(e.Text),transfer_fee:e.Opt(c),minting_account:u,maximum_number_of_accounts:e.Opt(e.Nat64),accounts_overflow_trim_quantity:e.Opt(e.Nat64),transaction_window:e.Opt(O),max_message_size_bytes:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),archive_options:e.Opt(x),initial_values:e.Vec(e.Tuple(u,c)),token_name:e.Opt(e.Text),feature_flags:e.Opt(a)}),q=e.Variant({Upgrade:e.Opt(i),Init:h}),o=e.Vec(e.Nat8),_=e.Record({account:o}),T=e.Record({account:u}),y=e.Record({canister_id:e.Principal}),p=e.Record({archives:e.Vec(y)}),n=e.Nat,P=e.Variant({Int:e.Int,Nat:e.Nat,Blob:e.Vec(e.Nat8),Text:e.Text}),d=e.Nat64,C=e.Record({to:t,fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n}),l=e.Nat,S=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),U=e.Variant({Ok:l,Err:S}),z=e.Record({account:t,spender:t}),M=e.Record({allowance:n,expires_at:e.Opt(d)}),H=e.Record({fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n,expected_allowance:e.Opt(n),expires_at:e.Opt(d),spender:t}),G=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),AllowanceChanged:e.Record({current_allowance:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,Expired:e.Record({ledger_time:e.Nat64}),InsufficientFunds:e.Record({balance:n})}),Q=e.Variant({Ok:l,Err:G}),W=e.Record({to:t,fee:e.Opt(n),spender_subaccount:e.Opt(r),from:t,memo:e.Opt(e.Vec(e.Nat8)),created_at_time:e.Opt(d),amount:n}),J=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,InsufficientAllowance:e.Record({allowance:n}),BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:d}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),$=e.Variant({Ok:l,Err:J}),s=e.Nat64,R=e.Record({start:s,length:e.Nat64}),g=e.Nat64,m=e.Record({timestamp_nanos:e.Nat64}),j=e.Variant({Approve:e.Record({fee:c,from:o,allowance_e8s:e.Int,allowance:c,expected_allowance:e.Opt(c),expires_at:e.Opt(m),spender:o}),Burn:e.Record({from:o,amount:c,spender:e.Opt(o)}),Mint:e.Record({to:o,amount:c}),Transfer:e.Record({to:o,fee:c,from:o,amount:c,spender:e.Opt(e.Vec(e.Nat8))})}),K=e.Record({memo:g,icrc1_memo:e.Opt(e.Vec(e.Nat8)),operation:e.Opt(j),created_at_time:m}),F=e.Record({transaction:K,timestamp:m,parent_hash:e.Opt(e.Vec(e.Nat8))}),Y=e.Record({blocks:e.Vec(F)}),w=e.Variant({BadFirstBlockIndex:e.Record({requested_index:s,first_valid_index:s}),Other:e.Record({error_message:e.Text,error_code:e.Nat64})}),X=e.Variant({Ok:Y,Err:w}),Z=e.Func([R],[X],[]),I=e.Record({callback:Z,start:s,length:e.Nat64}),D=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(F),chain_length:e.Nat64,first_block_index:s,archived_blocks:e.Vec(I)}),L=e.Record({callback:e.Func([R],[e.Variant({Ok:e.Vec(e.Vec(e.Nat8)),Err:w})],[]),start:e.Nat64,length:e.Nat64}),ee=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(e.Vec(e.Nat8)),chain_length:e.Nat64,first_block_index:e.Nat64,archived_blocks:e.Vec(L)}),te=e.Record({to:u,fee:c,memo:g,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),re=e.Record({to:o,fee:c,memo:g,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),ce=e.Variant({TxTooOld:e.Record({allowed_window_nanos:e.Nat64}),BadFee:e.Record({expected_fee:c}),TxDuplicate:e.Record({duplicate_of:s}),TxCreatedInFuture:e.Null,InsufficientFunds:e.Record({balance:c})}),ne=e.Variant({Ok:s,Err:ce}),ae=e.Record({}),oe=e.Record({transfer_fee:c});return e.Service({account_balance:e.Func([_],[c],[]),account_balance_dfx:e.Func([T],[c],[]),account_identifier:e.Func([t],[o],[]),archives:e.Func([],[p],[]),decimals:e.Func([],[e.Record({decimals:e.Nat32})],[]),icrc1_balance_of:e.Func([t],[n],[]),icrc1_decimals:e.Func([],[e.Nat8],[]),icrc1_fee:e.Func([],[n],[]),icrc1_metadata:e.Func([],[e.Vec(e.Tuple(e.Text,P))],[]),icrc1_minting_account:e.Func([],[e.Opt(t)],[]),icrc1_name:e.Func([],[e.Text],[]),icrc1_supported_standards:e.Func([],[e.Vec(e.Record({url:e.Text,name:e.Text}))],[]),icrc1_symbol:e.Func([],[e.Text],[]),icrc1_total_supply:e.Func([],[n],[]),icrc1_transfer:e.Func([C],[U],[]),icrc2_allowance:e.Func([z],[M],[]),icrc2_approve:e.Func([H],[Q],[]),icrc2_transfer_from:e.Func([W],[$],[]),name:e.Func([],[e.Record({name:e.Text})],[]),query_blocks:e.Func([R],[D],[]),query_encoded_blocks:e.Func([R],[ee],[]),send_dfx:e.Func([te],[s],[]),symbol:e.Func([],[e.Record({symbol:e.Text})],[]),transfer:e.Func([re],[ne],[]),transfer_fee:e.Func([ae],[oe],[])})};var me=({IDL:e})=>{let r=e.Vec(e.Nat8),t=e.Record({owner:e.Principal,subaccount:e.Opt(r)}),a=e.Record({icrc2:e.Bool}),i=e.Record({maximum_number_of_accounts:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),feature_flags:e.Opt(a)}),c=e.Record({e8s:e.Nat64}),u=e.Text,O=e.Record({secs:e.Nat64,nanos:e.Nat32}),x=e.Record({num_blocks_to_archive:e.Nat64,max_transactions_per_response:e.Opt(e.Nat64),trigger_threshold:e.Nat64,more_controller_ids:e.Opt(e.Vec(e.Principal)),max_message_size_bytes:e.Opt(e.Nat64),cycles_for_archive_creation:e.Opt(e.Nat64),node_max_memory_size_bytes:e.Opt(e.Nat64),controller_id:e.Principal}),h=e.Record({send_whitelist:e.Vec(e.Principal),token_symbol:e.Opt(e.Text),transfer_fee:e.Opt(c),minting_account:u,maximum_number_of_accounts:e.Opt(e.Nat64),accounts_overflow_trim_quantity:e.Opt(e.Nat64),transaction_window:e.Opt(O),max_message_size_bytes:e.Opt(e.Nat64),icrc1_minting_account:e.Opt(t),archive_options:e.Opt(x),initial_values:e.Vec(e.Tuple(u,c)),token_name:e.Opt(e.Text),feature_flags:e.Opt(a)}),q=e.Variant({Upgrade:e.Opt(i),Init:h}),o=e.Vec(e.Nat8),_=e.Record({account:o}),T=e.Record({account:u}),y=e.Record({canister_id:e.Principal}),p=e.Record({archives:e.Vec(y)}),n=e.Nat,P=e.Variant({Int:e.Int,Nat:e.Nat,Blob:e.Vec(e.Nat8),Text:e.Text}),d=e.Nat64,C=e.Record({to:t,fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n}),l=e.Nat,S=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),U=e.Variant({Ok:l,Err:S}),z=e.Record({account:t,spender:t}),M=e.Record({allowance:n,expires_at:e.Opt(d)}),H=e.Record({fee:e.Opt(n),memo:e.Opt(e.Vec(e.Nat8)),from_subaccount:e.Opt(r),created_at_time:e.Opt(d),amount:n,expected_allowance:e.Opt(n),expires_at:e.Opt(d),spender:t}),G=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),AllowanceChanged:e.Record({current_allowance:n}),CreatedInFuture:e.Record({ledger_time:e.Nat64}),TooOld:e.Null,Expired:e.Record({ledger_time:e.Nat64}),InsufficientFunds:e.Record({balance:n})}),Q=e.Variant({Ok:l,Err:G}),W=e.Record({to:t,fee:e.Opt(n),spender_subaccount:e.Opt(r),from:t,memo:e.Opt(e.Vec(e.Nat8)),created_at_time:e.Opt(d),amount:n}),J=e.Variant({GenericError:e.Record({message:e.Text,error_code:e.Nat}),TemporarilyUnavailable:e.Null,InsufficientAllowance:e.Record({allowance:n}),BadBurn:e.Record({min_burn_amount:n}),Duplicate:e.Record({duplicate_of:l}),BadFee:e.Record({expected_fee:n}),CreatedInFuture:e.Record({ledger_time:d}),TooOld:e.Null,InsufficientFunds:e.Record({balance:n})}),$=e.Variant({Ok:l,Err:J}),s=e.Nat64,R=e.Record({start:s,length:e.Nat64}),g=e.Nat64,m=e.Record({timestamp_nanos:e.Nat64}),j=e.Variant({Approve:e.Record({fee:c,from:o,allowance_e8s:e.Int,allowance:c,expected_allowance:e.Opt(c),expires_at:e.Opt(m),spender:o}),Burn:e.Record({from:o,amount:c,spender:e.Opt(o)}),Mint:e.Record({to:o,amount:c}),Transfer:e.Record({to:o,fee:c,from:o,amount:c,spender:e.Opt(e.Vec(e.Nat8))})}),K=e.Record({memo:g,icrc1_memo:e.Opt(e.Vec(e.Nat8)),operation:e.Opt(j),created_at_time:m}),F=e.Record({transaction:K,timestamp:m,parent_hash:e.Opt(e.Vec(e.Nat8))}),Y=e.Record({blocks:e.Vec(F)}),w=e.Variant({BadFirstBlockIndex:e.Record({requested_index:s,first_valid_index:s}),Other:e.Record({error_message:e.Text,error_code:e.Nat64})}),X=e.Variant({Ok:Y,Err:w}),Z=e.Func([R],[X],["query"]),I=e.Record({callback:Z,start:s,length:e.Nat64}),D=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(F),chain_length:e.Nat64,first_block_index:s,archived_blocks:e.Vec(I)}),L=e.Record({callback:e.Func([R],[e.Variant({Ok:e.Vec(e.Vec(e.Nat8)),Err:w})],["query"]),start:e.Nat64,length:e.Nat64}),ee=e.Record({certificate:e.Opt(e.Vec(e.Nat8)),blocks:e.Vec(e.Vec(e.Nat8)),chain_length:e.Nat64,first_block_index:e.Nat64,archived_blocks:e.Vec(L)}),te=e.Record({to:u,fee:c,memo:g,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),re=e.Record({to:o,fee:c,memo:g,from_subaccount:e.Opt(r),created_at_time:e.Opt(m),amount:c}),ce=e.Variant({TxTooOld:e.Record({allowed_window_nanos:e.Nat64}),BadFee:e.Record({expected_fee:c}),TxDuplicate:e.Record({duplicate_of:s}),TxCreatedInFuture:e.Null,InsufficientFunds:e.Record({balance:c})}),ne=e.Variant({Ok:s,Err:ce}),ae=e.Record({}),oe=e.Record({transfer_fee:c});return e.Service({account_balance:e.Func([_],[c],["query"]),account_balance_dfx:e.Func([T],[c],["query"]),account_identifier:e.Func([t],[o],["query"]),archives:e.Func([],[p],["query"]),decimals:e.Func([],[e.Record({decimals:e.Nat32})],["query"]),icrc1_balance_of:e.Func([t],[n],["query"]),icrc1_decimals:e.Func([],[e.Nat8],["query"]),icrc1_fee:e.Func([],[n],["query"]),icrc1_metadata:e.Func([],[e.Vec(e.Tuple(e.Text,P))],["query"]),icrc1_minting_account:e.Func([],[e.Opt(t)],["query"]),icrc1_name:e.Func([],[e.Text],["query"]),icrc1_supported_standards:e.Func([],[e.Vec(e.Record({url:e.Text,name:e.Text}))],["query"]),icrc1_symbol:e.Func([],[e.Text],["query"]),icrc1_total_supply:e.Func([],[n],["query"]),icrc1_transfer:e.Func([C],[U],[]),icrc2_allowance:e.Func([z],[M],["query"]),icrc2_approve:e.Func([H],[Q],[]),icrc2_transfer_from:e.Func([W],[$],[]),name:e.Func([],[e.Record({name:e.Text})],["query"]),query_blocks:e.Func([R],[D],["query"]),query_encoded_blocks:e.Func([R],[ee],["query"]),send_dfx:e.Func([te],[s],[]),symbol:e.Func([],[e.Record({symbol:e.Text})],["query"]),transfer:e.Func([re],[ne],[]),transfer_fee:e.Func([ae],[oe],["query"])})};var Ve=BigInt(1095062083),ke=BigInt(1347768404),N=BigInt(1e4),Be=BigInt(1e8);var Re=async e=>{let r=new Uint8Array(e).buffer,{Subaccount:t}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),a=new t;return a.setSubAccount(new Uint8Array(r)),a},se=async e=>{let{ICPTs:r}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),t=new r;return t.setE8s(e.toString(10)),t},fe=e=>({e8s:e}),Oe=({to:e,amount:r,memo:t,fee:a,fromSubAccount:i,createdAt:c})=>({to:e.toUint8Array(),fee:fe(a??N),amount:fe(r),memo:t??BigInt(0),created_at_time:c!==void 0?[{timestamp_nanos:c}]:[],from_subaccount:i===void 0?[]:[(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.arrayOfNumberToUint8Array)(i)]}),ge=({fromSubAccount:e,to:r,amount:t,fee:a,icrc1Memo:i,createdAt:c})=>({to:r,fee:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(a??N),amount:t,memo:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(i),created_at_time:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(c),from_subaccount:(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.toNullable)(e)});var f=class extends Error{},ie=class extends f{},Ne=class extends Error{},A=class extends f{constructor(t){super();this.balance=t}},v=class extends f{constructor(t){super();this.allowed_window_secs=t}},V=class extends f{},k=class extends f{constructor(t){super();this.duplicateOf=t}},E=class extends f{constructor(t){super();this.expectedFee=t}},Te=e=>"TxDuplicate"in e?new k(e.TxDuplicate.duplicate_of):"InsufficientFunds"in e?new A(e.InsufficientFunds.balance.e8s):"TxCreatedInFuture"in e?new V:"TxTooOld"in e?new v(Number(e.TxTooOld.allowed_window_nanos)):"BadFee"in e?new E(e.BadFee.expected_fee.e8s):new f(`Unknown error type ${JSON.stringify(e)}`),ye=e=>"Duplicate"in e?new k(e.Duplicate.duplicate_of):"InsufficientFunds"in e?new A(e.InsufficientFunds.balance):"CreatedInFuture"in e?new V:"TooOld"in e?new v:"BadFee"in e?new E(e.BadFee.expected_fee):new f(`Unknown error type ${JSON.stringify(e)}`),be=e=>{let{message:r}=e;if(r.includes("Reject code: 5")){if(r.match(/Sending from (.*) is not allowed/))return new ie;{let t=r.match(/transaction.*duplicate.* in block (\d+)/);if(t&&t.length>1)return new k(BigInt(t[1]))}{let t=r.match(/debit account.*, current balance: (\d*(\.\d*)?)/);if(t&&t.length>1){let a=(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.convertStringToE8s)(t[1]);if(typeof a=="bigint")return new A(a)}}if(r.includes("is in future"))return new V;{let t=r.match(/older than (\d+)/);if(t&&t.length>1)return new v(Number.parseInt(t[1]))}}throw e};var xe=class e{constructor(r,t,a,i,c,u,O=!1){this.agent=r;this.canisterId=t;this.service=a;this.certifiedService=i;this.updateFetcher=c;this.queryFetcher=u;this.hardwareWallet=O;this.accountBalance=async({accountIdentifier:r,certified:t=!0})=>{let a=(0,_chunk_K5HBSDBC_js__WEBPACK_IMPORTED_MODULE_0__.c)(r);return this.hardwareWallet?this.accountBalanceHardwareWallet({accountIdentifier:a,certified:t}):(await(t?this.certifiedService:this.service).account_balance({account:a.toUint8Array()})).e8s};this.transactionFee=async()=>{let{transfer_fee:{e8s:r}}=await this.service.transfer_fee({});return r};this.transfer=async r=>{if(this.hardwareWallet)return this.transferHardwareWallet(r);r.fee===void 0&&(r.fee=this.hardwareWallet?N:await this.transactionFee());let t=Oe(r),a=await this.certifiedService.transfer(t);if("Err"in a)throw Te(a.Err);return a.Ok};this.icrc1Transfer=async r=>{r.fee===void 0&&(r.fee=this.hardwareWallet?N:await this.transactionFee());let t=ge(r),a=await this.certifiedService.icrc1_transfer(t);if("Err"in a)throw ye(a.Err);return a.Ok};this.accountBalanceHardwareWallet=async({accountIdentifier:r,certified:t=!0})=>{let a=t?this.updateFetcher:this.queryFetcher,{AccountBalanceRequest:i,ICPTs:c}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),u=new i;u.setAccount(await r.toProto());let O=await a({agent:this.agent,canisterId:this.canisterId,methodName:"account_balance_pb",arg:u.serializeBinary()});return BigInt(c.deserializeBinary(new Uint8Array(O)).getE8s())};this.transferHardwareWallet=async({to:r,amount:t,memo:a,fee:i,fromSubAccount:c,createdAt:u})=>{let{SendRequest:O,Payment:x,Memo:h,TimeStamp:q,BlockHeight:o}=await (0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.d)(),_=new O;_.setTo(await r.toProto());let T=new x;T.setReceiverGets(await se(t)),_.setPayment(T),_.setMaxFee(await se(i??N));let y=new h;if(y.setMemo((a??BigInt(0)).toString()),_.setMemo(y),u!==void 0){let p=new q;p.setTimestampNanos(u.toString()),_.setCreatedAtTime(p)}c!==void 0&&_.setFromSubaccount(await Re(c));try{let p=await this.updateFetcher({agent:this.agent,canisterId:this.canisterId,methodName:"send_pb",arg:_.serializeBinary()});return BigInt(o.deserializeBinary(p).getHeight())}catch(p){throw p instanceof Error?be(p):p}}}static create(r={}){let t=r.canisterId??_chunk_K5HBSDBC_js__WEBPACK_IMPORTED_MODULE_0__.a,{service:a,certifiedService:i,agent:c}=(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_2__.createServices)({options:{...r,canisterId:t},idlFactory:me,certifiedIdlFactory:_e});return new e(c,t,a,i,r.updateCallOverride??_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.e,r.queryCallOverride??_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_1__.f,r.hardwareWallet)}};
+//# sourceMappingURL=chunk-TE6WSMZS.js.map
+
+
+/***/ }),
+
 /***/ "./node_modules/@dfinity/ledger-icp/dist/esm/index.js":
 /*!************************************************************!*\
   !*** ./node_modules/@dfinity/ledger-icp/dist/esm/index.js ***!
@@ -8433,33 +8535,33 @@ var A=({IDL:t})=>{let f=t.Record({ledger_id:t.Principal}),c=t.Record({max_result
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   AccountIdentifier: () => (/* reexport safe */ _chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.g),
-/* harmony export */   BadFeeError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.h),
+/* harmony export */   BadFeeError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.h),
 /* harmony export */   IndexCanister: () => (/* reexport safe */ _chunk_RI5E56HH_js__WEBPACK_IMPORTED_MODULE_0__.a),
-/* harmony export */   InsufficientFundsError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.d),
-/* harmony export */   InvalidAccountIDError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.c),
-/* harmony export */   InvalidSenderError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.b),
-/* harmony export */   LedgerCanister: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.l),
+/* harmony export */   InsufficientFundsError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.d),
+/* harmony export */   InvalidAccountIDError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.c),
+/* harmony export */   InvalidSenderError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.b),
+/* harmony export */   LedgerCanister: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.l),
 /* harmony export */   SubAccount: () => (/* reexport safe */ _chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.h),
-/* harmony export */   TransferError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.a),
-/* harmony export */   TxCreatedInFutureError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.f),
-/* harmony export */   TxDuplicateError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.g),
-/* harmony export */   TxTooOldError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.e),
+/* harmony export */   TransferError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.a),
+/* harmony export */   TxCreatedInFutureError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.f),
+/* harmony export */   TxDuplicateError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.g),
+/* harmony export */   TxTooOldError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.e),
 /* harmony export */   accountIdentifierFromBytes: () => (/* binding */ Et),
 /* harmony export */   accountIdentifierToBytes: () => (/* binding */ mt),
 /* harmony export */   checkAccountId: () => (/* binding */ Ut),
-/* harmony export */   mapIcrc1TransferError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.j),
-/* harmony export */   mapTransferError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.i),
-/* harmony export */   mapTransferProtoError: () => (/* reexport safe */ _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.k),
+/* harmony export */   mapIcrc1TransferError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.j),
+/* harmony export */   mapTransferError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.i),
+/* harmony export */   mapTransferProtoError: () => (/* reexport safe */ _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.k),
 /* harmony export */   principalToAccountIdentifier: () => (/* binding */ gt)
 /* harmony export */ });
 /* harmony import */ var _chunk_RI5E56HH_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./chunk-RI5E56HH.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-RI5E56HH.js");
-/* harmony import */ var _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./chunk-IGRXF4KV.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-IGRXF4KV.js");
+/* harmony import */ var _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./chunk-TE6WSMZS.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-TE6WSMZS.js");
 /* harmony import */ var _chunk_K5HBSDBC_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./chunk-K5HBSDBC.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-K5HBSDBC.js");
 /* harmony import */ var _chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./chunk-NT3CN7HG.js */ "./node_modules/@dfinity/ledger-icp/dist/esm/chunk-NT3CN7HG.js");
 /* harmony import */ var _dfinity_utils__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! @dfinity/utils */ "./node_modules/@dfinity/utils/dist/esm/index.js");
 /* provided dependency */ var Buffer = __webpack_require__(/*! ./node_modules/buffer/index.js */ "./node_modules/buffer/index.js")["Buffer"];
 var J=(0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.a)(S=>{"use strict";S.byteLength=gr;S.toByteArray=Fr;S.fromByteArray=Tr;var B=[],x=[],Er=typeof Uint8Array<"u"?Uint8Array:Array,M="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";for(g=0,X=M.length;g<X;++g)B[g]=M[g],x[M.charCodeAt(g)]=g;var g,X;x[45]=62;x[95]=63;function z(i){var r=i.length;if(r%4>0)throw new Error("Invalid string. Length must be a multiple of 4");var t=i.indexOf("=");t===-1&&(t=r);var n=t===r?0:4-t%4;return[t,n]}function gr(i){var r=z(i),t=r[0],n=r[1];return(t+n)*3/4-n}function Ir(i,r,t){return(r+t)*3/4-t}function Fr(i){var r,t=z(i),n=t[0],e=t[1],o=new Er(Ir(i,n,e)),u=0,h=e>0?n-4:n,f;for(f=0;f<h;f+=4)r=x[i.charCodeAt(f)]<<18|x[i.charCodeAt(f+1)]<<12|x[i.charCodeAt(f+2)]<<6|x[i.charCodeAt(f+3)],o[u++]=r>>16&255,o[u++]=r>>8&255,o[u++]=r&255;return e===2&&(r=x[i.charCodeAt(f)]<<2|x[i.charCodeAt(f+1)]>>4,o[u++]=r&255),e===1&&(r=x[i.charCodeAt(f)]<<10|x[i.charCodeAt(f+1)]<<4|x[i.charCodeAt(f+2)]>>2,o[u++]=r>>8&255,o[u++]=r&255),o}function Ar(i){return B[i>>18&63]+B[i>>12&63]+B[i>>6&63]+B[i&63]}function Ur(i,r,t){for(var n,e=[],o=r;o<t;o+=3)n=(i[o]<<16&16711680)+(i[o+1]<<8&65280)+(i[o+2]&255),e.push(Ar(n));return e.join("")}function Tr(i){for(var r,t=i.length,n=t%3,e=[],o=16383,u=0,h=t-n;u<h;u+=o)e.push(Ur(i,u,u+o>h?h:u+o));return n===1?(r=i[t-1],e.push(B[r>>2]+B[r<<4&63]+"==")):n===2&&(r=(i[t-2]<<8)+i[t-1],e.push(B[r>>10]+B[r>>4&63]+B[r<<2&63]+"=")),e.join("")}});var K=(0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.a)($=>{$.read=function(i,r,t,n,e){var o,u,h=e*8-n-1,f=(1<<h)-1,l=f>>1,s=-7,p=t?e-1:0,F=t?-1:1,w=i[r+p];for(p+=F,o=w&(1<<-s)-1,w>>=-s,s+=h;s>0;o=o*256+i[r+p],p+=F,s-=8);for(u=o&(1<<-s)-1,o>>=-s,s+=n;s>0;u=u*256+i[r+p],p+=F,s-=8);if(o===0)o=1-l;else{if(o===f)return u?NaN:(w?-1:1)*(1/0);u=u+Math.pow(2,n),o=o-l}return(w?-1:1)*u*Math.pow(2,o-n)};$.write=function(i,r,t,n,e,o){var u,h,f,l=o*8-e-1,s=(1<<l)-1,p=s>>1,F=e===23?Math.pow(2,-24)-Math.pow(2,-77):0,w=n?0:o-1,L=n?1:-1,yr=r<0||r===0&&1/r<0?1:0;for(r=Math.abs(r),isNaN(r)||r===1/0?(h=isNaN(r)?1:0,u=s):(u=Math.floor(Math.log(r)/Math.LN2),r*(f=Math.pow(2,-u))<1&&(u--,f*=2),u+p>=1?r+=F/f:r+=F*Math.pow(2,1-p),r*f>=2&&(u++,f/=2),u+p>=s?(h=0,u=s):u+p>=1?(h=(r*f-1)*Math.pow(2,e),u=u+p):(h=r*Math.pow(2,p-1)*Math.pow(2,e),u=0));e>=8;i[t+w]=h&255,w+=L,h/=256,e-=8);for(u=u<<e|h,l+=e;l>0;i[t+w]=u&255,w+=L,u/=256,l-=8);i[t+w-L]|=yr*128}});var ar=(0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.a)(C=>{"use strict";var D=J(),U=K(),Z=typeof Symbol=="function"&&typeof Symbol.for=="function"?Symbol.for("nodejs.util.inspect.custom"):null;C.Buffer=c;C.SlowBuffer=Lr;C.INSPECT_MAX_BYTES=50;var _=2147483647;C.kMaxLength=_;c.TYPED_ARRAY_SUPPORT=Cr();!c.TYPED_ARRAY_SUPPORT&&typeof console<"u"&&typeof console.error=="function"&&console.error("This browser lacks typed array (Uint8Array) support which is required by `buffer` v5.x. Use `buffer` v4.x if you require old browser support.");function Cr(){try{let i=new Uint8Array(1),r={foo:function(){return 42}};return Object.setPrototypeOf(r,Uint8Array.prototype),Object.setPrototypeOf(i,r),i.foo()===42}catch{return!1}}Object.defineProperty(c.prototype,"parent",{enumerable:!0,get:function(){if(c.isBuffer(this))return this.buffer}});Object.defineProperty(c.prototype,"offset",{enumerable:!0,get:function(){if(c.isBuffer(this))return this.byteOffset}});function m(i){if(i>_)throw new RangeError('The value "'+i+'" is invalid for option "size"');let r=new Uint8Array(i);return Object.setPrototypeOf(r,c.prototype),r}function c(i,r,t){if(typeof i=="number"){if(typeof r=="string")throw new TypeError('The "string" argument must be of type string. Received type number');return q(i)}return tr(i,r,t)}c.poolSize=8192;function tr(i,r,t){if(typeof i=="string")return Sr(i,r);if(ArrayBuffer.isView(i))return _r(i);if(i==null)throw new TypeError("The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received type "+typeof i);if(d(i,ArrayBuffer)||i&&d(i.buffer,ArrayBuffer)||typeof SharedArrayBuffer<"u"&&(d(i,SharedArrayBuffer)||i&&d(i.buffer,SharedArrayBuffer)))return O(i,r,t);if(typeof i=="number")throw new TypeError('The "value" argument must not be of type number. Received type number');let n=i.valueOf&&i.valueOf();if(n!=null&&n!==i)return c.from(n,r,t);let e=kr(i);if(e)return e;if(typeof Symbol<"u"&&Symbol.toPrimitive!=null&&typeof i[Symbol.toPrimitive]=="function")return c.from(i[Symbol.toPrimitive]("string"),r,t);throw new TypeError("The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received type "+typeof i)}c.from=function(i,r,t){return tr(i,r,t)};Object.setPrototypeOf(c.prototype,Uint8Array.prototype);Object.setPrototypeOf(c,Uint8Array);function ir(i){if(typeof i!="number")throw new TypeError('"size" argument must be of type number');if(i<0)throw new RangeError('The value "'+i+'" is invalid for option "size"')}function Rr(i,r,t){return ir(i),i<=0?m(i):r!==void 0?typeof t=="string"?m(i).fill(r,t):m(i).fill(r):m(i)}c.alloc=function(i,r,t){return Rr(i,r,t)};function q(i){return ir(i),m(i<0?0:H(i)|0)}c.allocUnsafe=function(i){return q(i)};c.allocUnsafeSlow=function(i){return q(i)};function Sr(i,r){if((typeof r!="string"||r==="")&&(r="utf8"),!c.isEncoding(r))throw new TypeError("Unknown encoding: "+r);let t=nr(i,r)|0,n=m(t),e=n.write(i,r);return e!==t&&(n=n.slice(0,e)),n}function P(i){let r=i.length<0?0:H(i.length)|0,t=m(r);for(let n=0;n<r;n+=1)t[n]=i[n]&255;return t}function _r(i){if(d(i,Uint8Array)){let r=new Uint8Array(i);return O(r.buffer,r.byteOffset,r.byteLength)}return P(i)}function O(i,r,t){if(r<0||i.byteLength<r)throw new RangeError('"offset" is outside of buffer bounds');if(i.byteLength<r+(t||0))throw new RangeError('"length" is outside of buffer bounds');let n;return r===void 0&&t===void 0?n=new Uint8Array(i):t===void 0?n=new Uint8Array(i,r):n=new Uint8Array(i,r,t),Object.setPrototypeOf(n,c.prototype),n}function kr(i){if(c.isBuffer(i)){let r=H(i.length)|0,t=m(r);return t.length===0||i.copy(t,0,0,r),t}if(i.length!==void 0)return typeof i.length!="number"||W(i.length)?m(0):P(i);if(i.type==="Buffer"&&Array.isArray(i.data))return P(i.data)}function H(i){if(i>=_)throw new RangeError("Attempt to allocate Buffer larger than maximum size: 0x"+_.toString(16)+" bytes");return i|0}function Lr(i){return+i!=i&&(i=0),c.alloc(+i)}c.isBuffer=function(r){return r!=null&&r._isBuffer===!0&&r!==c.prototype};c.compare=function(r,t){if(d(r,Uint8Array)&&(r=c.from(r,r.offset,r.byteLength)),d(t,Uint8Array)&&(t=c.from(t,t.offset,t.byteLength)),!c.isBuffer(r)||!c.isBuffer(t))throw new TypeError('The "buf1", "buf2" arguments must be one of type Buffer or Uint8Array');if(r===t)return 0;let n=r.length,e=t.length;for(let o=0,u=Math.min(n,e);o<u;++o)if(r[o]!==t[o]){n=r[o],e=t[o];break}return n<e?-1:e<n?1:0};c.isEncoding=function(r){switch(String(r).toLowerCase()){case"hex":case"utf8":case"utf-8":case"ascii":case"latin1":case"binary":case"base64":case"ucs2":case"ucs-2":case"utf16le":case"utf-16le":return!0;default:return!1}};c.concat=function(r,t){if(!Array.isArray(r))throw new TypeError('"list" argument must be an Array of Buffers');if(r.length===0)return c.alloc(0);let n;if(t===void 0)for(t=0,n=0;n<r.length;++n)t+=r[n].length;let e=c.allocUnsafe(t),o=0;for(n=0;n<r.length;++n){let u=r[n];if(d(u,Uint8Array))o+u.length>e.length?(c.isBuffer(u)||(u=c.from(u)),u.copy(e,o)):Uint8Array.prototype.set.call(e,u,o);else if(c.isBuffer(u))u.copy(e,o);else throw new TypeError('"list" argument must be an Array of Buffers');o+=u.length}return e};function nr(i,r){if(c.isBuffer(i))return i.length;if(ArrayBuffer.isView(i)||d(i,ArrayBuffer))return i.byteLength;if(typeof i!="string")throw new TypeError('The "string" argument must be one of type string, Buffer, or ArrayBuffer. Received type '+typeof i);let t=i.length,n=arguments.length>2&&arguments[2]===!0;if(!n&&t===0)return 0;let e=!1;for(;;)switch(r){case"ascii":case"latin1":case"binary":return t;case"utf8":case"utf-8":return G(i).length;case"ucs2":case"ucs-2":case"utf16le":case"utf-16le":return t*2;case"hex":return t>>>1;case"base64":return lr(i).length;default:if(e)return n?-1:G(i).length;r=(""+r).toLowerCase(),e=!0}}c.byteLength=nr;function Nr(i,r,t){let n=!1;if((r===void 0||r<0)&&(r=0),r>this.length||((t===void 0||t>this.length)&&(t=this.length),t<=0)||(t>>>=0,r>>>=0,t<=r))return"";for(i||(i="utf8");;)switch(i){case"hex":return Yr(this,r,t);case"utf8":case"utf-8":return or(this,r,t);case"ascii":return qr(this,r,t);case"latin1":case"binary":return Hr(this,r,t);case"base64":return Or(this,r,t);case"ucs2":case"ucs-2":case"utf16le":case"utf-16le":return Wr(this,r,t);default:if(n)throw new TypeError("Unknown encoding: "+i);i=(i+"").toLowerCase(),n=!0}}c.prototype._isBuffer=!0;function I(i,r,t){let n=i[r];i[r]=i[t],i[t]=n}c.prototype.swap16=function(){let r=this.length;if(r%2!==0)throw new RangeError("Buffer size must be a multiple of 16-bits");for(let t=0;t<r;t+=2)I(this,t,t+1);return this};c.prototype.swap32=function(){let r=this.length;if(r%4!==0)throw new RangeError("Buffer size must be a multiple of 32-bits");for(let t=0;t<r;t+=4)I(this,t,t+3),I(this,t+1,t+2);return this};c.prototype.swap64=function(){let r=this.length;if(r%8!==0)throw new RangeError("Buffer size must be a multiple of 64-bits");for(let t=0;t<r;t+=8)I(this,t,t+7),I(this,t+1,t+6),I(this,t+2,t+5),I(this,t+3,t+4);return this};c.prototype.toString=function(){let r=this.length;return r===0?"":arguments.length===0?or(this,0,r):Nr.apply(this,arguments)};c.prototype.toLocaleString=c.prototype.toString;c.prototype.equals=function(r){if(!c.isBuffer(r))throw new TypeError("Argument must be a Buffer");return this===r?!0:c.compare(this,r)===0};c.prototype.inspect=function(){let r="",t=C.INSPECT_MAX_BYTES;return r=this.toString("hex",0,t).replace(/(.{2})/g,"$1 ").trim(),this.length>t&&(r+=" ... "),"<Buffer "+r+">"};Z&&(c.prototype[Z]=c.prototype.inspect);c.prototype.compare=function(r,t,n,e,o){if(d(r,Uint8Array)&&(r=c.from(r,r.offset,r.byteLength)),!c.isBuffer(r))throw new TypeError('The "target" argument must be one of type Buffer or Uint8Array. Received type '+typeof r);if(t===void 0&&(t=0),n===void 0&&(n=r?r.length:0),e===void 0&&(e=0),o===void 0&&(o=this.length),t<0||n>r.length||e<0||o>this.length)throw new RangeError("out of range index");if(e>=o&&t>=n)return 0;if(e>=o)return-1;if(t>=n)return 1;if(t>>>=0,n>>>=0,e>>>=0,o>>>=0,this===r)return 0;let u=o-e,h=n-t,f=Math.min(u,h),l=this.slice(e,o),s=r.slice(t,n);for(let p=0;p<f;++p)if(l[p]!==s[p]){u=l[p],h=s[p];break}return u<h?-1:h<u?1:0};function er(i,r,t,n,e){if(i.length===0)return-1;if(typeof t=="string"?(n=t,t=0):t>2147483647?t=2147483647:t<-2147483648&&(t=-2147483648),t=+t,W(t)&&(t=e?0:i.length-1),t<0&&(t=i.length+t),t>=i.length){if(e)return-1;t=i.length-1}else if(t<0)if(e)t=0;else return-1;if(typeof r=="string"&&(r=c.from(r,n)),c.isBuffer(r))return r.length===0?-1:Q(i,r,t,n,e);if(typeof r=="number")return r=r&255,typeof Uint8Array.prototype.indexOf=="function"?e?Uint8Array.prototype.indexOf.call(i,r,t):Uint8Array.prototype.lastIndexOf.call(i,r,t):Q(i,[r],t,n,e);throw new TypeError("val must be string, number or Buffer")}function Q(i,r,t,n,e){let o=1,u=i.length,h=r.length;if(n!==void 0&&(n=String(n).toLowerCase(),n==="ucs2"||n==="ucs-2"||n==="utf16le"||n==="utf-16le")){if(i.length<2||r.length<2)return-1;o=2,u/=2,h/=2,t/=2}function f(s,p){return o===1?s[p]:s.readUInt16BE(p*o)}let l;if(e){let s=-1;for(l=t;l<u;l++)if(f(i,l)===f(r,s===-1?0:l-s)){if(s===-1&&(s=l),l-s+1===h)return s*o}else s!==-1&&(l-=l-s),s=-1}else for(t+h>u&&(t=u-h),l=t;l>=0;l--){let s=!0;for(let p=0;p<h;p++)if(f(i,l+p)!==f(r,p)){s=!1;break}if(s)return l}return-1}c.prototype.includes=function(r,t,n){return this.indexOf(r,t,n)!==-1};c.prototype.indexOf=function(r,t,n){return er(this,r,t,n,!0)};c.prototype.lastIndexOf=function(r,t,n){return er(this,r,t,n,!1)};function br(i,r,t,n){t=Number(t)||0;let e=i.length-t;n?(n=Number(n),n>e&&(n=e)):n=e;let o=r.length;n>o/2&&(n=o/2);let u;for(u=0;u<n;++u){let h=parseInt(r.substr(u*2,2),16);if(W(h))return u;i[t+u]=h}return u}function Mr(i,r,t,n){return k(G(r,i.length-t),i,t,n)}function $r(i,r,t,n){return k(zr(r),i,t,n)}function Dr(i,r,t,n){return k(lr(r),i,t,n)}function Pr(i,r,t,n){return k(Jr(r,i.length-t),i,t,n)}c.prototype.write=function(r,t,n,e){if(t===void 0)e="utf8",n=this.length,t=0;else if(n===void 0&&typeof t=="string")e=t,n=this.length,t=0;else if(isFinite(t))t=t>>>0,isFinite(n)?(n=n>>>0,e===void 0&&(e="utf8")):(e=n,n=void 0);else throw new Error("Buffer.write(string, encoding, offset[, length]) is no longer supported");let o=this.length-t;if((n===void 0||n>o)&&(n=o),r.length>0&&(n<0||t<0)||t>this.length)throw new RangeError("Attempt to write outside buffer bounds");e||(e="utf8");let u=!1;for(;;)switch(e){case"hex":return br(this,r,t,n);case"utf8":case"utf-8":return Mr(this,r,t,n);case"ascii":case"latin1":case"binary":return $r(this,r,t,n);case"base64":return Dr(this,r,t,n);case"ucs2":case"ucs-2":case"utf16le":case"utf-16le":return Pr(this,r,t,n);default:if(u)throw new TypeError("Unknown encoding: "+e);e=(""+e).toLowerCase(),u=!0}};c.prototype.toJSON=function(){return{type:"Buffer",data:Array.prototype.slice.call(this._arr||this,0)}};function Or(i,r,t){return r===0&&t===i.length?D.fromByteArray(i):D.fromByteArray(i.slice(r,t))}function or(i,r,t){t=Math.min(i.length,t);let n=[],e=r;for(;e<t;){let o=i[e],u=null,h=o>239?4:o>223?3:o>191?2:1;if(e+h<=t){let f,l,s,p;switch(h){case 1:o<128&&(u=o);break;case 2:f=i[e+1],(f&192)===128&&(p=(o&31)<<6|f&63,p>127&&(u=p));break;case 3:f=i[e+1],l=i[e+2],(f&192)===128&&(l&192)===128&&(p=(o&15)<<12|(f&63)<<6|l&63,p>2047&&(p<55296||p>57343)&&(u=p));break;case 4:f=i[e+1],l=i[e+2],s=i[e+3],(f&192)===128&&(l&192)===128&&(s&192)===128&&(p=(o&15)<<18|(f&63)<<12|(l&63)<<6|s&63,p>65535&&p<1114112&&(u=p))}}u===null?(u=65533,h=1):u>65535&&(u-=65536,n.push(u>>>10&1023|55296),u=56320|u&1023),n.push(u),e+=h}return Gr(n)}var v=4096;function Gr(i){let r=i.length;if(r<=v)return String.fromCharCode.apply(String,i);let t="",n=0;for(;n<r;)t+=String.fromCharCode.apply(String,i.slice(n,n+=v));return t}function qr(i,r,t){let n="";t=Math.min(i.length,t);for(let e=r;e<t;++e)n+=String.fromCharCode(i[e]&127);return n}function Hr(i,r,t){let n="";t=Math.min(i.length,t);for(let e=r;e<t;++e)n+=String.fromCharCode(i[e]);return n}function Yr(i,r,t){let n=i.length;(!r||r<0)&&(r=0),(!t||t<0||t>n)&&(t=n);let e="";for(let o=r;o<t;++o)e+=Kr[i[o]];return e}function Wr(i,r,t){let n=i.slice(r,t),e="";for(let o=0;o<n.length-1;o+=2)e+=String.fromCharCode(n[o]+n[o+1]*256);return e}c.prototype.slice=function(r,t){let n=this.length;r=~~r,t=t===void 0?n:~~t,r<0?(r+=n,r<0&&(r=0)):r>n&&(r=n),t<0?(t+=n,t<0&&(t=0)):t>n&&(t=n),t<r&&(t=r);let e=this.subarray(r,t);return Object.setPrototypeOf(e,c.prototype),e};function a(i,r,t){if(i%1!==0||i<0)throw new RangeError("offset is not uint");if(i+r>t)throw new RangeError("Trying to access beyond buffer length")}c.prototype.readUintLE=c.prototype.readUIntLE=function(r,t,n){r=r>>>0,t=t>>>0,n||a(r,t,this.length);let e=this[r],o=1,u=0;for(;++u<t&&(o*=256);)e+=this[r+u]*o;return e};c.prototype.readUintBE=c.prototype.readUIntBE=function(r,t,n){r=r>>>0,t=t>>>0,n||a(r,t,this.length);let e=this[r+--t],o=1;for(;t>0&&(o*=256);)e+=this[r+--t]*o;return e};c.prototype.readUint8=c.prototype.readUInt8=function(r,t){return r=r>>>0,t||a(r,1,this.length),this[r]};c.prototype.readUint16LE=c.prototype.readUInt16LE=function(r,t){return r=r>>>0,t||a(r,2,this.length),this[r]|this[r+1]<<8};c.prototype.readUint16BE=c.prototype.readUInt16BE=function(r,t){return r=r>>>0,t||a(r,2,this.length),this[r]<<8|this[r+1]};c.prototype.readUint32LE=c.prototype.readUInt32LE=function(r,t){return r=r>>>0,t||a(r,4,this.length),(this[r]|this[r+1]<<8|this[r+2]<<16)+this[r+3]*16777216};c.prototype.readUint32BE=c.prototype.readUInt32BE=function(r,t){return r=r>>>0,t||a(r,4,this.length),this[r]*16777216+(this[r+1]<<16|this[r+2]<<8|this[r+3])};c.prototype.readBigUInt64LE=E(function(r){r=r>>>0,T(r,"offset");let t=this[r],n=this[r+7];(t===void 0||n===void 0)&&R(r,this.length-8);let e=t+this[++r]*2**8+this[++r]*2**16+this[++r]*2**24,o=this[++r]+this[++r]*2**8+this[++r]*2**16+n*2**24;return BigInt(e)+(BigInt(o)<<BigInt(32))});c.prototype.readBigUInt64BE=E(function(r){r=r>>>0,T(r,"offset");let t=this[r],n=this[r+7];(t===void 0||n===void 0)&&R(r,this.length-8);let e=t*2**24+this[++r]*2**16+this[++r]*2**8+this[++r],o=this[++r]*2**24+this[++r]*2**16+this[++r]*2**8+n;return(BigInt(e)<<BigInt(32))+BigInt(o)});c.prototype.readIntLE=function(r,t,n){r=r>>>0,t=t>>>0,n||a(r,t,this.length);let e=this[r],o=1,u=0;for(;++u<t&&(o*=256);)e+=this[r+u]*o;return o*=128,e>=o&&(e-=Math.pow(2,8*t)),e};c.prototype.readIntBE=function(r,t,n){r=r>>>0,t=t>>>0,n||a(r,t,this.length);let e=t,o=1,u=this[r+--e];for(;e>0&&(o*=256);)u+=this[r+--e]*o;return o*=128,u>=o&&(u-=Math.pow(2,8*t)),u};c.prototype.readInt8=function(r,t){return r=r>>>0,t||a(r,1,this.length),this[r]&128?(255-this[r]+1)*-1:this[r]};c.prototype.readInt16LE=function(r,t){r=r>>>0,t||a(r,2,this.length);let n=this[r]|this[r+1]<<8;return n&32768?n|4294901760:n};c.prototype.readInt16BE=function(r,t){r=r>>>0,t||a(r,2,this.length);let n=this[r+1]|this[r]<<8;return n&32768?n|4294901760:n};c.prototype.readInt32LE=function(r,t){return r=r>>>0,t||a(r,4,this.length),this[r]|this[r+1]<<8|this[r+2]<<16|this[r+3]<<24};c.prototype.readInt32BE=function(r,t){return r=r>>>0,t||a(r,4,this.length),this[r]<<24|this[r+1]<<16|this[r+2]<<8|this[r+3]};c.prototype.readBigInt64LE=E(function(r){r=r>>>0,T(r,"offset");let t=this[r],n=this[r+7];(t===void 0||n===void 0)&&R(r,this.length-8);let e=this[r+4]+this[r+5]*2**8+this[r+6]*2**16+(n<<24);return(BigInt(e)<<BigInt(32))+BigInt(t+this[++r]*2**8+this[++r]*2**16+this[++r]*2**24)});c.prototype.readBigInt64BE=E(function(r){r=r>>>0,T(r,"offset");let t=this[r],n=this[r+7];(t===void 0||n===void 0)&&R(r,this.length-8);let e=(t<<24)+this[++r]*2**16+this[++r]*2**8+this[++r];return(BigInt(e)<<BigInt(32))+BigInt(this[++r]*2**24+this[++r]*2**16+this[++r]*2**8+n)});c.prototype.readFloatLE=function(r,t){return r=r>>>0,t||a(r,4,this.length),U.read(this,r,!0,23,4)};c.prototype.readFloatBE=function(r,t){return r=r>>>0,t||a(r,4,this.length),U.read(this,r,!1,23,4)};c.prototype.readDoubleLE=function(r,t){return r=r>>>0,t||a(r,8,this.length),U.read(this,r,!0,52,8)};c.prototype.readDoubleBE=function(r,t){return r=r>>>0,t||a(r,8,this.length),U.read(this,r,!1,52,8)};function y(i,r,t,n,e,o){if(!c.isBuffer(i))throw new TypeError('"buffer" argument must be a Buffer instance');if(r>e||r<o)throw new RangeError('"value" argument is out of bounds');if(t+n>i.length)throw new RangeError("Index out of range")}c.prototype.writeUintLE=c.prototype.writeUIntLE=function(r,t,n,e){if(r=+r,t=t>>>0,n=n>>>0,!e){let h=Math.pow(2,8*n)-1;y(this,r,t,n,h,0)}let o=1,u=0;for(this[t]=r&255;++u<n&&(o*=256);)this[t+u]=r/o&255;return t+n};c.prototype.writeUintBE=c.prototype.writeUIntBE=function(r,t,n,e){if(r=+r,t=t>>>0,n=n>>>0,!e){let h=Math.pow(2,8*n)-1;y(this,r,t,n,h,0)}let o=n-1,u=1;for(this[t+o]=r&255;--o>=0&&(u*=256);)this[t+o]=r/u&255;return t+n};c.prototype.writeUint8=c.prototype.writeUInt8=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,1,255,0),this[t]=r&255,t+1};c.prototype.writeUint16LE=c.prototype.writeUInt16LE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,2,65535,0),this[t]=r&255,this[t+1]=r>>>8,t+2};c.prototype.writeUint16BE=c.prototype.writeUInt16BE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,2,65535,0),this[t]=r>>>8,this[t+1]=r&255,t+2};c.prototype.writeUint32LE=c.prototype.writeUInt32LE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,4,4294967295,0),this[t+3]=r>>>24,this[t+2]=r>>>16,this[t+1]=r>>>8,this[t]=r&255,t+4};c.prototype.writeUint32BE=c.prototype.writeUInt32BE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,4,4294967295,0),this[t]=r>>>24,this[t+1]=r>>>16,this[t+2]=r>>>8,this[t+3]=r&255,t+4};function ur(i,r,t,n,e){sr(r,n,e,i,t,7);let o=Number(r&BigInt(4294967295));i[t++]=o,o=o>>8,i[t++]=o,o=o>>8,i[t++]=o,o=o>>8,i[t++]=o;let u=Number(r>>BigInt(32)&BigInt(4294967295));return i[t++]=u,u=u>>8,i[t++]=u,u=u>>8,i[t++]=u,u=u>>8,i[t++]=u,t}function cr(i,r,t,n,e){sr(r,n,e,i,t,7);let o=Number(r&BigInt(4294967295));i[t+7]=o,o=o>>8,i[t+6]=o,o=o>>8,i[t+5]=o,o=o>>8,i[t+4]=o;let u=Number(r>>BigInt(32)&BigInt(4294967295));return i[t+3]=u,u=u>>8,i[t+2]=u,u=u>>8,i[t+1]=u,u=u>>8,i[t]=u,t+8}c.prototype.writeBigUInt64LE=E(function(r,t=0){return ur(this,r,t,BigInt(0),BigInt("0xffffffffffffffff"))});c.prototype.writeBigUInt64BE=E(function(r,t=0){return cr(this,r,t,BigInt(0),BigInt("0xffffffffffffffff"))});c.prototype.writeIntLE=function(r,t,n,e){if(r=+r,t=t>>>0,!e){let f=Math.pow(2,8*n-1);y(this,r,t,n,f-1,-f)}let o=0,u=1,h=0;for(this[t]=r&255;++o<n&&(u*=256);)r<0&&h===0&&this[t+o-1]!==0&&(h=1),this[t+o]=(r/u>>0)-h&255;return t+n};c.prototype.writeIntBE=function(r,t,n,e){if(r=+r,t=t>>>0,!e){let f=Math.pow(2,8*n-1);y(this,r,t,n,f-1,-f)}let o=n-1,u=1,h=0;for(this[t+o]=r&255;--o>=0&&(u*=256);)r<0&&h===0&&this[t+o+1]!==0&&(h=1),this[t+o]=(r/u>>0)-h&255;return t+n};c.prototype.writeInt8=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,1,127,-128),r<0&&(r=255+r+1),this[t]=r&255,t+1};c.prototype.writeInt16LE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,2,32767,-32768),this[t]=r&255,this[t+1]=r>>>8,t+2};c.prototype.writeInt16BE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,2,32767,-32768),this[t]=r>>>8,this[t+1]=r&255,t+2};c.prototype.writeInt32LE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,4,2147483647,-2147483648),this[t]=r&255,this[t+1]=r>>>8,this[t+2]=r>>>16,this[t+3]=r>>>24,t+4};c.prototype.writeInt32BE=function(r,t,n){return r=+r,t=t>>>0,n||y(this,r,t,4,2147483647,-2147483648),r<0&&(r=4294967295+r+1),this[t]=r>>>24,this[t+1]=r>>>16,this[t+2]=r>>>8,this[t+3]=r&255,t+4};c.prototype.writeBigInt64LE=E(function(r,t=0){return ur(this,r,t,-BigInt("0x8000000000000000"),BigInt("0x7fffffffffffffff"))});c.prototype.writeBigInt64BE=E(function(r,t=0){return cr(this,r,t,-BigInt("0x8000000000000000"),BigInt("0x7fffffffffffffff"))});function hr(i,r,t,n,e,o){if(t+n>i.length)throw new RangeError("Index out of range");if(t<0)throw new RangeError("Index out of range")}function fr(i,r,t,n,e){return r=+r,t=t>>>0,e||hr(i,r,t,4,34028234663852886e22,-34028234663852886e22),U.write(i,r,t,n,23,4),t+4}c.prototype.writeFloatLE=function(r,t,n){return fr(this,r,t,!0,n)};c.prototype.writeFloatBE=function(r,t,n){return fr(this,r,t,!1,n)};function pr(i,r,t,n,e){return r=+r,t=t>>>0,e||hr(i,r,t,8,17976931348623157e292,-17976931348623157e292),U.write(i,r,t,n,52,8),t+8}c.prototype.writeDoubleLE=function(r,t,n){return pr(this,r,t,!0,n)};c.prototype.writeDoubleBE=function(r,t,n){return pr(this,r,t,!1,n)};c.prototype.copy=function(r,t,n,e){if(!c.isBuffer(r))throw new TypeError("argument should be a Buffer");if(n||(n=0),!e&&e!==0&&(e=this.length),t>=r.length&&(t=r.length),t||(t=0),e>0&&e<n&&(e=n),e===n||r.length===0||this.length===0)return 0;if(t<0)throw new RangeError("targetStart out of bounds");if(n<0||n>=this.length)throw new RangeError("Index out of range");if(e<0)throw new RangeError("sourceEnd out of bounds");e>this.length&&(e=this.length),r.length-t<e-n&&(e=r.length-t+n);let o=e-n;return this===r&&typeof Uint8Array.prototype.copyWithin=="function"?this.copyWithin(t,n,e):Uint8Array.prototype.set.call(r,this.subarray(n,e),t),o};c.prototype.fill=function(r,t,n,e){if(typeof r=="string"){if(typeof t=="string"?(e=t,t=0,n=this.length):typeof n=="string"&&(e=n,n=this.length),e!==void 0&&typeof e!="string")throw new TypeError("encoding must be a string");if(typeof e=="string"&&!c.isEncoding(e))throw new TypeError("Unknown encoding: "+e);if(r.length===1){let u=r.charCodeAt(0);(e==="utf8"&&u<128||e==="latin1")&&(r=u)}}else typeof r=="number"?r=r&255:typeof r=="boolean"&&(r=Number(r));if(t<0||this.length<t||this.length<n)throw new RangeError("Out of range index");if(n<=t)return this;t=t>>>0,n=n===void 0?this.length:n>>>0,r||(r=0);let o;if(typeof r=="number")for(o=t;o<n;++o)this[o]=r;else{let u=c.isBuffer(r)?r:c.from(r,e),h=u.length;if(h===0)throw new TypeError('The value "'+r+'" is invalid for argument "value"');for(o=0;o<n-t;++o)this[o+t]=u[o%h]}return this};var A={};function Y(i,r,t){A[i]=class extends t{constructor(){super(),Object.defineProperty(this,"message",{value:r.apply(this,arguments),writable:!0,configurable:!0}),this.name=`${this.name} [${i}]`,this.stack,delete this.name}get code(){return i}set code(e){Object.defineProperty(this,"code",{configurable:!0,enumerable:!0,value:e,writable:!0})}toString(){return`${this.name} [${i}]: ${this.message}`}}}Y("ERR_BUFFER_OUT_OF_BOUNDS",function(i){return i?`${i} is outside of buffer bounds`:"Attempt to access memory outside buffer bounds"},RangeError);Y("ERR_INVALID_ARG_TYPE",function(i,r){return`The "${i}" argument must be of type number. Received type ${typeof r}`},TypeError);Y("ERR_OUT_OF_RANGE",function(i,r,t){let n=`The value of "${i}" is out of range.`,e=t;return Number.isInteger(t)&&Math.abs(t)>2**32?e=rr(String(t)):typeof t=="bigint"&&(e=String(t),(t>BigInt(2)**BigInt(32)||t<-(BigInt(2)**BigInt(32)))&&(e=rr(e)),e+="n"),n+=` It must be ${r}. Received ${e}`,n},RangeError);function rr(i){let r="",t=i.length,n=i[0]==="-"?1:0;for(;t>=n+4;t-=3)r=`_${i.slice(t-3,t)}${r}`;return`${i.slice(0,t)}${r}`}function jr(i,r,t){T(r,"offset"),(i[r]===void 0||i[r+t]===void 0)&&R(r,i.length-(t+1))}function sr(i,r,t,n,e,o){if(i>t||i<r){let u=typeof r=="bigint"?"n":"",h;throw o>3?r===0||r===BigInt(0)?h=`>= 0${u} and < 2${u} ** ${(o+1)*8}${u}`:h=`>= -(2${u} ** ${(o+1)*8-1}${u}) and < 2 ** ${(o+1)*8-1}${u}`:h=`>= ${r}${u} and <= ${t}${u}`,new A.ERR_OUT_OF_RANGE("value",h,i)}jr(n,e,o)}function T(i,r){if(typeof i!="number")throw new A.ERR_INVALID_ARG_TYPE(r,"number",i)}function R(i,r,t){throw Math.floor(i)!==i?(T(i,t),new A.ERR_OUT_OF_RANGE(t||"offset","an integer",i)):r<0?new A.ERR_BUFFER_OUT_OF_BOUNDS:new A.ERR_OUT_OF_RANGE(t||"offset",`>= ${t?1:0} and <= ${r}`,i)}var Vr=/[^+/0-9A-Za-z-_]/g;function Xr(i){if(i=i.split("=")[0],i=i.trim().replace(Vr,""),i.length<2)return"";for(;i.length%4!==0;)i=i+"=";return i}function G(i,r){r=r||1/0;let t,n=i.length,e=null,o=[];for(let u=0;u<n;++u){if(t=i.charCodeAt(u),t>55295&&t<57344){if(!e){if(t>56319){(r-=3)>-1&&o.push(239,191,189);continue}else if(u+1===n){(r-=3)>-1&&o.push(239,191,189);continue}e=t;continue}if(t<56320){(r-=3)>-1&&o.push(239,191,189),e=t;continue}t=(e-55296<<10|t-56320)+65536}else e&&(r-=3)>-1&&o.push(239,191,189);if(e=null,t<128){if((r-=1)<0)break;o.push(t)}else if(t<2048){if((r-=2)<0)break;o.push(t>>6|192,t&63|128)}else if(t<65536){if((r-=3)<0)break;o.push(t>>12|224,t>>6&63|128,t&63|128)}else if(t<1114112){if((r-=4)<0)break;o.push(t>>18|240,t>>12&63|128,t>>6&63|128,t&63|128)}else throw new Error("Invalid code point")}return o}function zr(i){let r=[];for(let t=0;t<i.length;++t)r.push(i.charCodeAt(t)&255);return r}function Jr(i,r){let t,n,e,o=[];for(let u=0;u<i.length&&!((r-=2)<0);++u)t=i.charCodeAt(u),n=t>>8,e=t%256,o.push(e),o.push(n);return o}function lr(i){return D.toByteArray(Xr(i))}function k(i,r,t,n){let e;for(e=0;e<n&&!(e+t>=r.length||e>=i.length);++e)r[e+t]=i[e];return e}function d(i,r){return i instanceof r||i!=null&&i.constructor!=null&&i.constructor.name!=null&&i.constructor.name===r.name}function W(i){return i!==i}var Kr=function(){let i="0123456789abcdef",r=new Array(256);for(let t=0;t<16;++t){let n=t*16;for(let e=0;e<16;++e)r[n+e]=i[t]+i[e]}return r}();function E(i){return typeof BigInt>"u"?Zr:i}function Zr(){throw new Error("BigInt not supported")}});var j=(0,_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.b)(ar()),mt=i=>Uint8Array.from(j.Buffer.from(i,"hex")).subarray(4),Et=i=>j.Buffer.from(i).toString("hex"),gt=(i,r)=>{let t=(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.asciiStringToByteArray)(`
-account-id`),n=_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.c.create();n.update((0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.arrayOfNumberToUint8Array)([...t,...i.toUint8Array(),...r??Array(32).fill(0)]));let e=n.digest(),o=(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.bigEndianCrc32)(e),u=new Uint8Array([...o,...e]);return (0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.uint8ArrayToHexString)(u)};var Ut=i=>{if(i.length!=64)throw new _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.c(`Invalid account identifier ${i}. The account identifier must be 64 chars in length.`);let r=Buffer.from(i,"hex"),t=r.slice(0,4),n=Buffer.from((0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.bigEndianCrc32)(r.slice(4)));if(!n.equals(t))throw new _chunk_IGRXF4KV_js__WEBPACK_IMPORTED_MODULE_1__.c(`Account identifier ${i} has an invalid checksum. Are you sure the account identifier is correct?
+account-id`),n=_chunk_NT3CN7HG_js__WEBPACK_IMPORTED_MODULE_3__.c.create();n.update((0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.arrayOfNumberToUint8Array)([...t,...i.toUint8Array(),...r??Array(32).fill(0)]));let e=n.digest(),o=(0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.bigEndianCrc32)(e),u=new Uint8Array([...o,...e]);return (0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.uint8ArrayToHexString)(u)};var Ut=i=>{if(i.length!=64)throw new _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.c(`Invalid account identifier ${i}. The account identifier must be 64 chars in length.`);let r=Buffer.from(i,"hex"),t=r.slice(0,4),n=Buffer.from((0,_dfinity_utils__WEBPACK_IMPORTED_MODULE_4__.bigEndianCrc32)(r.slice(4)));if(!n.equals(t))throw new _chunk_TE6WSMZS_js__WEBPACK_IMPORTED_MODULE_1__.c(`Account identifier ${i} has an invalid checksum. Are you sure the account identifier is correct?
 
 Expected checksum: ${n.toString("hex")}
 Found checksum: ${t.toString("hex")}`)};
@@ -19519,6 +19621,536 @@ module.exports = {
 
 /***/ }),
 
+/***/ "./node_modules/js-sha256/src/sha256.js":
+/*!**********************************************!*\
+  !*** ./node_modules/js-sha256/src/sha256.js ***!
+  \**********************************************/
+/***/ ((module, exports, __webpack_require__) => {
+
+/* provided dependency */ var process = __webpack_require__(/*! ./node_modules/process/browser.js */ "./node_modules/process/browser.js");
+var __WEBPACK_AMD_DEFINE_RESULT__;/**
+ * [js-sha256]{@link https://github.com/emn178/js-sha256}
+ *
+ * @version 0.9.0
+ * @author Chen, Yi-Cyuan [emn178@gmail.com]
+ * @copyright Chen, Yi-Cyuan 2014-2017
+ * @license MIT
+ */
+/*jslint bitwise: true */
+(function () {
+  'use strict';
+
+  var ERROR = 'input is invalid type';
+  var WINDOW = typeof window === 'object';
+  var root = WINDOW ? window : {};
+  if (root.JS_SHA256_NO_WINDOW) {
+    WINDOW = false;
+  }
+  var WEB_WORKER = !WINDOW && typeof self === 'object';
+  var NODE_JS = !root.JS_SHA256_NO_NODE_JS && typeof process === 'object' && process.versions && process.versions.node;
+  if (NODE_JS) {
+    root = __webpack_require__.g;
+  } else if (WEB_WORKER) {
+    root = self;
+  }
+  var COMMON_JS = !root.JS_SHA256_NO_COMMON_JS && "object" === 'object' && module.exports;
+  var AMD =  true && __webpack_require__.amdO;
+  var ARRAY_BUFFER = !root.JS_SHA256_NO_ARRAY_BUFFER && typeof ArrayBuffer !== 'undefined';
+  var HEX_CHARS = '0123456789abcdef'.split('');
+  var EXTRA = [-2147483648, 8388608, 32768, 128];
+  var SHIFT = [24, 16, 8, 0];
+  var K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+  ];
+  var OUTPUT_TYPES = ['hex', 'array', 'digest', 'arrayBuffer'];
+
+  var blocks = [];
+
+  if (root.JS_SHA256_NO_NODE_JS || !Array.isArray) {
+    Array.isArray = function (obj) {
+      return Object.prototype.toString.call(obj) === '[object Array]';
+    };
+  }
+
+  if (ARRAY_BUFFER && (root.JS_SHA256_NO_ARRAY_BUFFER_IS_VIEW || !ArrayBuffer.isView)) {
+    ArrayBuffer.isView = function (obj) {
+      return typeof obj === 'object' && obj.buffer && obj.buffer.constructor === ArrayBuffer;
+    };
+  }
+
+  var createOutputMethod = function (outputType, is224) {
+    return function (message) {
+      return new Sha256(is224, true).update(message)[outputType]();
+    };
+  };
+
+  var createMethod = function (is224) {
+    var method = createOutputMethod('hex', is224);
+    if (NODE_JS) {
+      method = nodeWrap(method, is224);
+    }
+    method.create = function () {
+      return new Sha256(is224);
+    };
+    method.update = function (message) {
+      return method.create().update(message);
+    };
+    for (var i = 0; i < OUTPUT_TYPES.length; ++i) {
+      var type = OUTPUT_TYPES[i];
+      method[type] = createOutputMethod(type, is224);
+    }
+    return method;
+  };
+
+  var nodeWrap = function (method, is224) {
+    var crypto = eval("require('crypto')");
+    var Buffer = eval("require('buffer').Buffer");
+    var algorithm = is224 ? 'sha224' : 'sha256';
+    var nodeMethod = function (message) {
+      if (typeof message === 'string') {
+        return crypto.createHash(algorithm).update(message, 'utf8').digest('hex');
+      } else {
+        if (message === null || message === undefined) {
+          throw new Error(ERROR);
+        } else if (message.constructor === ArrayBuffer) {
+          message = new Uint8Array(message);
+        }
+      }
+      if (Array.isArray(message) || ArrayBuffer.isView(message) ||
+        message.constructor === Buffer) {
+        return crypto.createHash(algorithm).update(new Buffer(message)).digest('hex');
+      } else {
+        return method(message);
+      }
+    };
+    return nodeMethod;
+  };
+
+  var createHmacOutputMethod = function (outputType, is224) {
+    return function (key, message) {
+      return new HmacSha256(key, is224, true).update(message)[outputType]();
+    };
+  };
+
+  var createHmacMethod = function (is224) {
+    var method = createHmacOutputMethod('hex', is224);
+    method.create = function (key) {
+      return new HmacSha256(key, is224);
+    };
+    method.update = function (key, message) {
+      return method.create(key).update(message);
+    };
+    for (var i = 0; i < OUTPUT_TYPES.length; ++i) {
+      var type = OUTPUT_TYPES[i];
+      method[type] = createHmacOutputMethod(type, is224);
+    }
+    return method;
+  };
+
+  function Sha256(is224, sharedMemory) {
+    if (sharedMemory) {
+      blocks[0] = blocks[16] = blocks[1] = blocks[2] = blocks[3] =
+        blocks[4] = blocks[5] = blocks[6] = blocks[7] =
+        blocks[8] = blocks[9] = blocks[10] = blocks[11] =
+        blocks[12] = blocks[13] = blocks[14] = blocks[15] = 0;
+      this.blocks = blocks;
+    } else {
+      this.blocks = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    }
+
+    if (is224) {
+      this.h0 = 0xc1059ed8;
+      this.h1 = 0x367cd507;
+      this.h2 = 0x3070dd17;
+      this.h3 = 0xf70e5939;
+      this.h4 = 0xffc00b31;
+      this.h5 = 0x68581511;
+      this.h6 = 0x64f98fa7;
+      this.h7 = 0xbefa4fa4;
+    } else { // 256
+      this.h0 = 0x6a09e667;
+      this.h1 = 0xbb67ae85;
+      this.h2 = 0x3c6ef372;
+      this.h3 = 0xa54ff53a;
+      this.h4 = 0x510e527f;
+      this.h5 = 0x9b05688c;
+      this.h6 = 0x1f83d9ab;
+      this.h7 = 0x5be0cd19;
+    }
+
+    this.block = this.start = this.bytes = this.hBytes = 0;
+    this.finalized = this.hashed = false;
+    this.first = true;
+    this.is224 = is224;
+  }
+
+  Sha256.prototype.update = function (message) {
+    if (this.finalized) {
+      return;
+    }
+    var notString, type = typeof message;
+    if (type !== 'string') {
+      if (type === 'object') {
+        if (message === null) {
+          throw new Error(ERROR);
+        } else if (ARRAY_BUFFER && message.constructor === ArrayBuffer) {
+          message = new Uint8Array(message);
+        } else if (!Array.isArray(message)) {
+          if (!ARRAY_BUFFER || !ArrayBuffer.isView(message)) {
+            throw new Error(ERROR);
+          }
+        }
+      } else {
+        throw new Error(ERROR);
+      }
+      notString = true;
+    }
+    var code, index = 0, i, length = message.length, blocks = this.blocks;
+
+    while (index < length) {
+      if (this.hashed) {
+        this.hashed = false;
+        blocks[0] = this.block;
+        blocks[16] = blocks[1] = blocks[2] = blocks[3] =
+          blocks[4] = blocks[5] = blocks[6] = blocks[7] =
+          blocks[8] = blocks[9] = blocks[10] = blocks[11] =
+          blocks[12] = blocks[13] = blocks[14] = blocks[15] = 0;
+      }
+
+      if (notString) {
+        for (i = this.start; index < length && i < 64; ++index) {
+          blocks[i >> 2] |= message[index] << SHIFT[i++ & 3];
+        }
+      } else {
+        for (i = this.start; index < length && i < 64; ++index) {
+          code = message.charCodeAt(index);
+          if (code < 0x80) {
+            blocks[i >> 2] |= code << SHIFT[i++ & 3];
+          } else if (code < 0x800) {
+            blocks[i >> 2] |= (0xc0 | (code >> 6)) << SHIFT[i++ & 3];
+            blocks[i >> 2] |= (0x80 | (code & 0x3f)) << SHIFT[i++ & 3];
+          } else if (code < 0xd800 || code >= 0xe000) {
+            blocks[i >> 2] |= (0xe0 | (code >> 12)) << SHIFT[i++ & 3];
+            blocks[i >> 2] |= (0x80 | ((code >> 6) & 0x3f)) << SHIFT[i++ & 3];
+            blocks[i >> 2] |= (0x80 | (code & 0x3f)) << SHIFT[i++ & 3];
+          } else {
+            code = 0x10000 + (((code & 0x3ff) << 10) | (message.charCodeAt(++index) & 0x3ff));
+            blocks[i >> 2] |= (0xf0 | (code >> 18)) << SHIFT[i++ & 3];
+            blocks[i >> 2] |= (0x80 | ((code >> 12) & 0x3f)) << SHIFT[i++ & 3];
+            blocks[i >> 2] |= (0x80 | ((code >> 6) & 0x3f)) << SHIFT[i++ & 3];
+            blocks[i >> 2] |= (0x80 | (code & 0x3f)) << SHIFT[i++ & 3];
+          }
+        }
+      }
+
+      this.lastByteIndex = i;
+      this.bytes += i - this.start;
+      if (i >= 64) {
+        this.block = blocks[16];
+        this.start = i - 64;
+        this.hash();
+        this.hashed = true;
+      } else {
+        this.start = i;
+      }
+    }
+    if (this.bytes > 4294967295) {
+      this.hBytes += this.bytes / 4294967296 << 0;
+      this.bytes = this.bytes % 4294967296;
+    }
+    return this;
+  };
+
+  Sha256.prototype.finalize = function () {
+    if (this.finalized) {
+      return;
+    }
+    this.finalized = true;
+    var blocks = this.blocks, i = this.lastByteIndex;
+    blocks[16] = this.block;
+    blocks[i >> 2] |= EXTRA[i & 3];
+    this.block = blocks[16];
+    if (i >= 56) {
+      if (!this.hashed) {
+        this.hash();
+      }
+      blocks[0] = this.block;
+      blocks[16] = blocks[1] = blocks[2] = blocks[3] =
+        blocks[4] = blocks[5] = blocks[6] = blocks[7] =
+        blocks[8] = blocks[9] = blocks[10] = blocks[11] =
+        blocks[12] = blocks[13] = blocks[14] = blocks[15] = 0;
+    }
+    blocks[14] = this.hBytes << 3 | this.bytes >>> 29;
+    blocks[15] = this.bytes << 3;
+    this.hash();
+  };
+
+  Sha256.prototype.hash = function () {
+    var a = this.h0, b = this.h1, c = this.h2, d = this.h3, e = this.h4, f = this.h5, g = this.h6,
+      h = this.h7, blocks = this.blocks, j, s0, s1, maj, t1, t2, ch, ab, da, cd, bc;
+
+    for (j = 16; j < 64; ++j) {
+      // rightrotate
+      t1 = blocks[j - 15];
+      s0 = ((t1 >>> 7) | (t1 << 25)) ^ ((t1 >>> 18) | (t1 << 14)) ^ (t1 >>> 3);
+      t1 = blocks[j - 2];
+      s1 = ((t1 >>> 17) | (t1 << 15)) ^ ((t1 >>> 19) | (t1 << 13)) ^ (t1 >>> 10);
+      blocks[j] = blocks[j - 16] + s0 + blocks[j - 7] + s1 << 0;
+    }
+
+    bc = b & c;
+    for (j = 0; j < 64; j += 4) {
+      if (this.first) {
+        if (this.is224) {
+          ab = 300032;
+          t1 = blocks[0] - 1413257819;
+          h = t1 - 150054599 << 0;
+          d = t1 + 24177077 << 0;
+        } else {
+          ab = 704751109;
+          t1 = blocks[0] - 210244248;
+          h = t1 - 1521486534 << 0;
+          d = t1 + 143694565 << 0;
+        }
+        this.first = false;
+      } else {
+        s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+        s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+        ab = a & b;
+        maj = ab ^ (a & c) ^ bc;
+        ch = (e & f) ^ (~e & g);
+        t1 = h + s1 + ch + K[j] + blocks[j];
+        t2 = s0 + maj;
+        h = d + t1 << 0;
+        d = t1 + t2 << 0;
+      }
+      s0 = ((d >>> 2) | (d << 30)) ^ ((d >>> 13) | (d << 19)) ^ ((d >>> 22) | (d << 10));
+      s1 = ((h >>> 6) | (h << 26)) ^ ((h >>> 11) | (h << 21)) ^ ((h >>> 25) | (h << 7));
+      da = d & a;
+      maj = da ^ (d & b) ^ ab;
+      ch = (h & e) ^ (~h & f);
+      t1 = g + s1 + ch + K[j + 1] + blocks[j + 1];
+      t2 = s0 + maj;
+      g = c + t1 << 0;
+      c = t1 + t2 << 0;
+      s0 = ((c >>> 2) | (c << 30)) ^ ((c >>> 13) | (c << 19)) ^ ((c >>> 22) | (c << 10));
+      s1 = ((g >>> 6) | (g << 26)) ^ ((g >>> 11) | (g << 21)) ^ ((g >>> 25) | (g << 7));
+      cd = c & d;
+      maj = cd ^ (c & a) ^ da;
+      ch = (g & h) ^ (~g & e);
+      t1 = f + s1 + ch + K[j + 2] + blocks[j + 2];
+      t2 = s0 + maj;
+      f = b + t1 << 0;
+      b = t1 + t2 << 0;
+      s0 = ((b >>> 2) | (b << 30)) ^ ((b >>> 13) | (b << 19)) ^ ((b >>> 22) | (b << 10));
+      s1 = ((f >>> 6) | (f << 26)) ^ ((f >>> 11) | (f << 21)) ^ ((f >>> 25) | (f << 7));
+      bc = b & c;
+      maj = bc ^ (b & d) ^ cd;
+      ch = (f & g) ^ (~f & h);
+      t1 = e + s1 + ch + K[j + 3] + blocks[j + 3];
+      t2 = s0 + maj;
+      e = a + t1 << 0;
+      a = t1 + t2 << 0;
+    }
+
+    this.h0 = this.h0 + a << 0;
+    this.h1 = this.h1 + b << 0;
+    this.h2 = this.h2 + c << 0;
+    this.h3 = this.h3 + d << 0;
+    this.h4 = this.h4 + e << 0;
+    this.h5 = this.h5 + f << 0;
+    this.h6 = this.h6 + g << 0;
+    this.h7 = this.h7 + h << 0;
+  };
+
+  Sha256.prototype.hex = function () {
+    this.finalize();
+
+    var h0 = this.h0, h1 = this.h1, h2 = this.h2, h3 = this.h3, h4 = this.h4, h5 = this.h5,
+      h6 = this.h6, h7 = this.h7;
+
+    var hex = HEX_CHARS[(h0 >> 28) & 0x0F] + HEX_CHARS[(h0 >> 24) & 0x0F] +
+      HEX_CHARS[(h0 >> 20) & 0x0F] + HEX_CHARS[(h0 >> 16) & 0x0F] +
+      HEX_CHARS[(h0 >> 12) & 0x0F] + HEX_CHARS[(h0 >> 8) & 0x0F] +
+      HEX_CHARS[(h0 >> 4) & 0x0F] + HEX_CHARS[h0 & 0x0F] +
+      HEX_CHARS[(h1 >> 28) & 0x0F] + HEX_CHARS[(h1 >> 24) & 0x0F] +
+      HEX_CHARS[(h1 >> 20) & 0x0F] + HEX_CHARS[(h1 >> 16) & 0x0F] +
+      HEX_CHARS[(h1 >> 12) & 0x0F] + HEX_CHARS[(h1 >> 8) & 0x0F] +
+      HEX_CHARS[(h1 >> 4) & 0x0F] + HEX_CHARS[h1 & 0x0F] +
+      HEX_CHARS[(h2 >> 28) & 0x0F] + HEX_CHARS[(h2 >> 24) & 0x0F] +
+      HEX_CHARS[(h2 >> 20) & 0x0F] + HEX_CHARS[(h2 >> 16) & 0x0F] +
+      HEX_CHARS[(h2 >> 12) & 0x0F] + HEX_CHARS[(h2 >> 8) & 0x0F] +
+      HEX_CHARS[(h2 >> 4) & 0x0F] + HEX_CHARS[h2 & 0x0F] +
+      HEX_CHARS[(h3 >> 28) & 0x0F] + HEX_CHARS[(h3 >> 24) & 0x0F] +
+      HEX_CHARS[(h3 >> 20) & 0x0F] + HEX_CHARS[(h3 >> 16) & 0x0F] +
+      HEX_CHARS[(h3 >> 12) & 0x0F] + HEX_CHARS[(h3 >> 8) & 0x0F] +
+      HEX_CHARS[(h3 >> 4) & 0x0F] + HEX_CHARS[h3 & 0x0F] +
+      HEX_CHARS[(h4 >> 28) & 0x0F] + HEX_CHARS[(h4 >> 24) & 0x0F] +
+      HEX_CHARS[(h4 >> 20) & 0x0F] + HEX_CHARS[(h4 >> 16) & 0x0F] +
+      HEX_CHARS[(h4 >> 12) & 0x0F] + HEX_CHARS[(h4 >> 8) & 0x0F] +
+      HEX_CHARS[(h4 >> 4) & 0x0F] + HEX_CHARS[h4 & 0x0F] +
+      HEX_CHARS[(h5 >> 28) & 0x0F] + HEX_CHARS[(h5 >> 24) & 0x0F] +
+      HEX_CHARS[(h5 >> 20) & 0x0F] + HEX_CHARS[(h5 >> 16) & 0x0F] +
+      HEX_CHARS[(h5 >> 12) & 0x0F] + HEX_CHARS[(h5 >> 8) & 0x0F] +
+      HEX_CHARS[(h5 >> 4) & 0x0F] + HEX_CHARS[h5 & 0x0F] +
+      HEX_CHARS[(h6 >> 28) & 0x0F] + HEX_CHARS[(h6 >> 24) & 0x0F] +
+      HEX_CHARS[(h6 >> 20) & 0x0F] + HEX_CHARS[(h6 >> 16) & 0x0F] +
+      HEX_CHARS[(h6 >> 12) & 0x0F] + HEX_CHARS[(h6 >> 8) & 0x0F] +
+      HEX_CHARS[(h6 >> 4) & 0x0F] + HEX_CHARS[h6 & 0x0F];
+    if (!this.is224) {
+      hex += HEX_CHARS[(h7 >> 28) & 0x0F] + HEX_CHARS[(h7 >> 24) & 0x0F] +
+        HEX_CHARS[(h7 >> 20) & 0x0F] + HEX_CHARS[(h7 >> 16) & 0x0F] +
+        HEX_CHARS[(h7 >> 12) & 0x0F] + HEX_CHARS[(h7 >> 8) & 0x0F] +
+        HEX_CHARS[(h7 >> 4) & 0x0F] + HEX_CHARS[h7 & 0x0F];
+    }
+    return hex;
+  };
+
+  Sha256.prototype.toString = Sha256.prototype.hex;
+
+  Sha256.prototype.digest = function () {
+    this.finalize();
+
+    var h0 = this.h0, h1 = this.h1, h2 = this.h2, h3 = this.h3, h4 = this.h4, h5 = this.h5,
+      h6 = this.h6, h7 = this.h7;
+
+    var arr = [
+      (h0 >> 24) & 0xFF, (h0 >> 16) & 0xFF, (h0 >> 8) & 0xFF, h0 & 0xFF,
+      (h1 >> 24) & 0xFF, (h1 >> 16) & 0xFF, (h1 >> 8) & 0xFF, h1 & 0xFF,
+      (h2 >> 24) & 0xFF, (h2 >> 16) & 0xFF, (h2 >> 8) & 0xFF, h2 & 0xFF,
+      (h3 >> 24) & 0xFF, (h3 >> 16) & 0xFF, (h3 >> 8) & 0xFF, h3 & 0xFF,
+      (h4 >> 24) & 0xFF, (h4 >> 16) & 0xFF, (h4 >> 8) & 0xFF, h4 & 0xFF,
+      (h5 >> 24) & 0xFF, (h5 >> 16) & 0xFF, (h5 >> 8) & 0xFF, h5 & 0xFF,
+      (h6 >> 24) & 0xFF, (h6 >> 16) & 0xFF, (h6 >> 8) & 0xFF, h6 & 0xFF
+    ];
+    if (!this.is224) {
+      arr.push((h7 >> 24) & 0xFF, (h7 >> 16) & 0xFF, (h7 >> 8) & 0xFF, h7 & 0xFF);
+    }
+    return arr;
+  };
+
+  Sha256.prototype.array = Sha256.prototype.digest;
+
+  Sha256.prototype.arrayBuffer = function () {
+    this.finalize();
+
+    var buffer = new ArrayBuffer(this.is224 ? 28 : 32);
+    var dataView = new DataView(buffer);
+    dataView.setUint32(0, this.h0);
+    dataView.setUint32(4, this.h1);
+    dataView.setUint32(8, this.h2);
+    dataView.setUint32(12, this.h3);
+    dataView.setUint32(16, this.h4);
+    dataView.setUint32(20, this.h5);
+    dataView.setUint32(24, this.h6);
+    if (!this.is224) {
+      dataView.setUint32(28, this.h7);
+    }
+    return buffer;
+  };
+
+  function HmacSha256(key, is224, sharedMemory) {
+    var i, type = typeof key;
+    if (type === 'string') {
+      var bytes = [], length = key.length, index = 0, code;
+      for (i = 0; i < length; ++i) {
+        code = key.charCodeAt(i);
+        if (code < 0x80) {
+          bytes[index++] = code;
+        } else if (code < 0x800) {
+          bytes[index++] = (0xc0 | (code >> 6));
+          bytes[index++] = (0x80 | (code & 0x3f));
+        } else if (code < 0xd800 || code >= 0xe000) {
+          bytes[index++] = (0xe0 | (code >> 12));
+          bytes[index++] = (0x80 | ((code >> 6) & 0x3f));
+          bytes[index++] = (0x80 | (code & 0x3f));
+        } else {
+          code = 0x10000 + (((code & 0x3ff) << 10) | (key.charCodeAt(++i) & 0x3ff));
+          bytes[index++] = (0xf0 | (code >> 18));
+          bytes[index++] = (0x80 | ((code >> 12) & 0x3f));
+          bytes[index++] = (0x80 | ((code >> 6) & 0x3f));
+          bytes[index++] = (0x80 | (code & 0x3f));
+        }
+      }
+      key = bytes;
+    } else {
+      if (type === 'object') {
+        if (key === null) {
+          throw new Error(ERROR);
+        } else if (ARRAY_BUFFER && key.constructor === ArrayBuffer) {
+          key = new Uint8Array(key);
+        } else if (!Array.isArray(key)) {
+          if (!ARRAY_BUFFER || !ArrayBuffer.isView(key)) {
+            throw new Error(ERROR);
+          }
+        }
+      } else {
+        throw new Error(ERROR);
+      }
+    }
+
+    if (key.length > 64) {
+      key = (new Sha256(is224, true)).update(key).array();
+    }
+
+    var oKeyPad = [], iKeyPad = [];
+    for (i = 0; i < 64; ++i) {
+      var b = key[i] || 0;
+      oKeyPad[i] = 0x5c ^ b;
+      iKeyPad[i] = 0x36 ^ b;
+    }
+
+    Sha256.call(this, is224, sharedMemory);
+
+    this.update(iKeyPad);
+    this.oKeyPad = oKeyPad;
+    this.inner = true;
+    this.sharedMemory = sharedMemory;
+  }
+  HmacSha256.prototype = new Sha256();
+
+  HmacSha256.prototype.finalize = function () {
+    Sha256.prototype.finalize.call(this);
+    if (this.inner) {
+      this.inner = false;
+      var innerHash = this.array();
+      Sha256.call(this, this.is224, this.sharedMemory);
+      this.update(this.oKeyPad);
+      this.update(innerHash);
+      Sha256.prototype.finalize.call(this);
+    }
+  };
+
+  var exports = createMethod();
+  exports.sha256 = exports;
+  exports.sha224 = createMethod(true);
+  exports.sha256.hmac = createHmacMethod();
+  exports.sha224.hmac = createHmacMethod(true);
+
+  if (COMMON_JS) {
+    module.exports = exports;
+  } else {
+    root.sha256 = exports.sha256;
+    root.sha224 = exports.sha224;
+    if (AMD) {
+      !(__WEBPACK_AMD_DEFINE_RESULT__ = (function () {
+        return exports;
+      }).call(exports, __webpack_require__, exports, module),
+		__WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
+    }
+  }
+})();
+
+
+/***/ }),
+
 /***/ "./node_modules/process/browser.js":
 /*!*****************************************!*\
   !*** ./node_modules/process/browser.js ***!
@@ -20425,6 +21057,5914 @@ const init = ({ IDL }) => { return [IDL.Principal]; };
 
 /***/ }),
 
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/actor.js":
+/*!***********************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/actor.js ***!
+  \***********************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Actor: () => (/* binding */ Actor),
+/* harmony export */   ActorCallError: () => (/* binding */ ActorCallError),
+/* harmony export */   CanisterInstallMode: () => (/* binding */ CanisterInstallMode),
+/* harmony export */   QueryCallRejectedError: () => (/* binding */ QueryCallRejectedError),
+/* harmony export */   UpdateCallRejectedError: () => (/* binding */ UpdateCallRejectedError),
+/* harmony export */   getManagementCanister: () => (/* binding */ getManagementCanister)
+/* harmony export */ });
+/* harmony import */ var buffer___WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! buffer/ */ "./node_modules/buffer/index.js");
+/* harmony import */ var _agent__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./agent */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/index.js");
+/* harmony import */ var _errors__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./errors */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/errors.js");
+/* harmony import */ var _dfinity_candid__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! @dfinity/candid */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/index.js");
+/* harmony import */ var _polling__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./polling */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/polling/index.js");
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+/* harmony import */ var _canisters_management_idl__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./canisters/management_idl */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/management_idl.js");
+
+
+
+
+
+
+
+
+class ActorCallError extends _errors__WEBPACK_IMPORTED_MODULE_2__.AgentError {
+    constructor(canisterId, methodName, type, props) {
+        super([
+            `Call failed:`,
+            `  Canister: ${canisterId.toText()}`,
+            `  Method: ${methodName} (${type})`,
+            ...Object.getOwnPropertyNames(props).map(n => `  "${n}": ${JSON.stringify(props[n])}`),
+        ].join('\n'));
+        this.canisterId = canisterId;
+        this.methodName = methodName;
+        this.type = type;
+        this.props = props;
+    }
+}
+class QueryCallRejectedError extends ActorCallError {
+    constructor(canisterId, methodName, result) {
+        var _a;
+        super(canisterId, methodName, 'query', {
+            Status: result.status,
+            Code: (_a = _agent__WEBPACK_IMPORTED_MODULE_1__.ReplicaRejectCode[result.reject_code]) !== null && _a !== void 0 ? _a : `Unknown Code "${result.reject_code}"`,
+            Message: result.reject_message,
+        });
+        this.result = result;
+    }
+}
+class UpdateCallRejectedError extends ActorCallError {
+    constructor(canisterId, methodName, requestId, response) {
+        super(canisterId, methodName, 'update', {
+            'Request ID': (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_6__.toHex)(requestId),
+            'HTTP status code': response.status.toString(),
+            'HTTP status text': response.statusText,
+        });
+        this.requestId = requestId;
+        this.response = response;
+    }
+}
+/**
+ * The mode used when installing a canister.
+ */
+var CanisterInstallMode;
+(function (CanisterInstallMode) {
+    CanisterInstallMode["Install"] = "install";
+    CanisterInstallMode["Reinstall"] = "reinstall";
+    CanisterInstallMode["Upgrade"] = "upgrade";
+})(CanisterInstallMode || (CanisterInstallMode = {}));
+const metadataSymbol = Symbol.for('ic-agent-metadata');
+/**
+ * An actor base class. An actor is an object containing only functions that will
+ * return a promise. These functions are derived from the IDL definition.
+ */
+class Actor {
+    constructor(metadata) {
+        this[metadataSymbol] = Object.freeze(metadata);
+    }
+    /**
+     * Get the Agent class this Actor would call, or undefined if the Actor would use
+     * the default agent (global.ic.agent).
+     * @param actor The actor to get the agent of.
+     */
+    static agentOf(actor) {
+        return actor[metadataSymbol].config.agent;
+    }
+    /**
+     * Get the interface of an actor, in the form of an instance of a Service.
+     * @param actor The actor to get the interface of.
+     */
+    static interfaceOf(actor) {
+        return actor[metadataSymbol].service;
+    }
+    static canisterIdOf(actor) {
+        return _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.from(actor[metadataSymbol].config.canisterId);
+    }
+    static async install(fields, config) {
+        const mode = fields.mode === undefined ? CanisterInstallMode.Install : fields.mode;
+        // Need to transform the arg into a number array.
+        const arg = fields.arg ? [...new Uint8Array(fields.arg)] : [];
+        // Same for module.
+        const wasmModule = [...new Uint8Array(fields.module)];
+        const canisterId = typeof config.canisterId === 'string'
+            ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.fromText(config.canisterId)
+            : config.canisterId;
+        await getManagementCanister(config).install_code({
+            mode: { [mode]: null },
+            arg,
+            wasm_module: wasmModule,
+            canister_id: canisterId,
+        });
+    }
+    static async createCanister(config) {
+        const { canister_id: canisterId } = await getManagementCanister(config || {}).provisional_create_canister_with_cycles({ amount: [], settings: [] });
+        return canisterId;
+    }
+    static async createAndInstallCanister(interfaceFactory, fields, config) {
+        const canisterId = await this.createCanister(config);
+        await this.install(Object.assign({}, fields), Object.assign(Object.assign({}, config), { canisterId }));
+        return this.createActor(interfaceFactory, Object.assign(Object.assign({}, config), { canisterId }));
+    }
+    static createActorClass(interfaceFactory) {
+        const service = interfaceFactory({ IDL: _dfinity_candid__WEBPACK_IMPORTED_MODULE_3__.IDL });
+        class CanisterActor extends Actor {
+            constructor(config) {
+                const canisterId = typeof config.canisterId === 'string'
+                    ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.fromText(config.canisterId)
+                    : config.canisterId;
+                super({
+                    config: Object.assign(Object.assign(Object.assign({}, DEFAULT_ACTOR_CONFIG), config), { canisterId }),
+                    service,
+                });
+                for (const [methodName, func] of service._fields) {
+                    this[methodName] = _createActorMethod(this, methodName, func, config.blsVerify);
+                }
+            }
+        }
+        return CanisterActor;
+    }
+    static createActor(interfaceFactory, configuration) {
+        return new (this.createActorClass(interfaceFactory))(configuration);
+    }
+}
+// IDL functions can have multiple return values, so decoding always
+// produces an array. Ensure that functions with single or zero return
+// values behave as expected.
+function decodeReturnValue(types, msg) {
+    const returnValues = _dfinity_candid__WEBPACK_IMPORTED_MODULE_3__.IDL.decode(types, buffer___WEBPACK_IMPORTED_MODULE_0__.Buffer.from(msg));
+    switch (returnValues.length) {
+        case 0:
+            return undefined;
+        case 1:
+            return returnValues[0];
+        default:
+            return returnValues;
+    }
+}
+const DEFAULT_ACTOR_CONFIG = {
+    pollingStrategyFactory: _polling__WEBPACK_IMPORTED_MODULE_4__.strategy.defaultStrategy,
+};
+function _createActorMethod(actor, methodName, func, blsVerify) {
+    let caller;
+    if (func.annotations.includes('query')) {
+        caller = async (options, ...args) => {
+            var _a, _b;
+            // First, if there's a config transformation, call it.
+            options = Object.assign(Object.assign({}, options), (_b = (_a = actor[metadataSymbol].config).queryTransform) === null || _b === void 0 ? void 0 : _b.call(_a, methodName, args, Object.assign(Object.assign({}, actor[metadataSymbol].config), options)));
+            const agent = options.agent || actor[metadataSymbol].config.agent || (0,_agent__WEBPACK_IMPORTED_MODULE_1__.getDefaultAgent)();
+            const cid = _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.from(options.canisterId || actor[metadataSymbol].config.canisterId);
+            const arg = _dfinity_candid__WEBPACK_IMPORTED_MODULE_3__.IDL.encode(func.argTypes, args);
+            const result = await agent.query(cid, { methodName, arg });
+            switch (result.status) {
+                case "rejected" /* QueryResponseStatus.Rejected */:
+                    throw new QueryCallRejectedError(cid, methodName, result);
+                case "replied" /* QueryResponseStatus.Replied */:
+                    return decodeReturnValue(func.retTypes, result.reply.arg);
+            }
+        };
+    }
+    else {
+        caller = async (options, ...args) => {
+            var _a, _b;
+            // First, if there's a config transformation, call it.
+            options = Object.assign(Object.assign({}, options), (_b = (_a = actor[metadataSymbol].config).callTransform) === null || _b === void 0 ? void 0 : _b.call(_a, methodName, args, Object.assign(Object.assign({}, actor[metadataSymbol].config), options)));
+            const agent = options.agent || actor[metadataSymbol].config.agent || (0,_agent__WEBPACK_IMPORTED_MODULE_1__.getDefaultAgent)();
+            const { canisterId, effectiveCanisterId, pollingStrategyFactory } = Object.assign(Object.assign(Object.assign({}, DEFAULT_ACTOR_CONFIG), actor[metadataSymbol].config), options);
+            const cid = _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.from(canisterId);
+            const ecid = effectiveCanisterId !== undefined ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.from(effectiveCanisterId) : cid;
+            const arg = _dfinity_candid__WEBPACK_IMPORTED_MODULE_3__.IDL.encode(func.argTypes, args);
+            const { requestId, response } = await agent.call(cid, {
+                methodName,
+                arg,
+                effectiveCanisterId: ecid,
+            });
+            if (!response.ok) {
+                throw new UpdateCallRejectedError(cid, methodName, requestId, response);
+            }
+            const pollStrategy = pollingStrategyFactory();
+            const responseBytes = await (0,_polling__WEBPACK_IMPORTED_MODULE_4__.pollForResponse)(agent, ecid, requestId, pollStrategy, blsVerify);
+            if (responseBytes !== undefined) {
+                return decodeReturnValue(func.retTypes, responseBytes);
+            }
+            else if (func.retTypes.length === 0) {
+                return undefined;
+            }
+            else {
+                throw new Error(`Call was returned undefined, but type [${func.retTypes.join(',')}].`);
+            }
+        };
+    }
+    const handler = (...args) => caller({}, ...args);
+    handler.withOptions =
+        (options) => (...args) => caller(options, ...args);
+    return handler;
+}
+/**
+ * Create a management canister actor
+ * @param config
+ */
+function getManagementCanister(config) {
+    function transform(_methodName, args, _callConfig) {
+        const first = args[0];
+        let effectiveCanisterId = _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.fromHex('');
+        if (first && typeof first === 'object' && first.canister_id) {
+            effectiveCanisterId = _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.from(first.canister_id);
+        }
+        return { effectiveCanisterId };
+    }
+    return Actor.createActor(_canisters_management_idl__WEBPACK_IMPORTED_MODULE_7__["default"], Object.assign(Object.assign(Object.assign({}, config), { canisterId: _dfinity_principal__WEBPACK_IMPORTED_MODULE_5__.Principal.fromHex('') }), {
+        callTransform: transform,
+        queryTransform: transform,
+    }));
+}
+//# sourceMappingURL=actor.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/api.js":
+/*!***************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/api.js ***!
+  \***************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   ReplicaRejectCode: () => (/* binding */ ReplicaRejectCode)
+/* harmony export */ });
+/**
+ * Codes used by the replica for rejecting a message.
+ * See {@link https://sdk.dfinity.org/docs/interface-spec/#reject-codes | the interface spec}.
+ */
+var ReplicaRejectCode;
+(function (ReplicaRejectCode) {
+    ReplicaRejectCode[ReplicaRejectCode["SysFatal"] = 1] = "SysFatal";
+    ReplicaRejectCode[ReplicaRejectCode["SysTransient"] = 2] = "SysTransient";
+    ReplicaRejectCode[ReplicaRejectCode["DestinationInvalid"] = 3] = "DestinationInvalid";
+    ReplicaRejectCode[ReplicaRejectCode["CanisterReject"] = 4] = "CanisterReject";
+    ReplicaRejectCode[ReplicaRejectCode["CanisterError"] = 5] = "CanisterError";
+})(ReplicaRejectCode || (ReplicaRejectCode = {}));
+//# sourceMappingURL=api.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/index.js":
+/*!**********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/index.js ***!
+  \**********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Expiry: () => (/* reexport safe */ _transforms__WEBPACK_IMPORTED_MODULE_6__.Expiry),
+/* harmony export */   HttpAgent: () => (/* binding */ HttpAgent),
+/* harmony export */   IdentityInvalidError: () => (/* binding */ IdentityInvalidError),
+/* harmony export */   RequestStatusResponseStatus: () => (/* binding */ RequestStatusResponseStatus),
+/* harmony export */   makeExpiryTransform: () => (/* reexport safe */ _transforms__WEBPACK_IMPORTED_MODULE_6__.makeExpiryTransform),
+/* harmony export */   makeNonce: () => (/* reexport safe */ _types__WEBPACK_IMPORTED_MODULE_7__.makeNonce),
+/* harmony export */   makeNonceTransform: () => (/* reexport safe */ _transforms__WEBPACK_IMPORTED_MODULE_6__.makeNonceTransform)
+/* harmony export */ });
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _errors__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../../errors */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/errors.js");
+/* harmony import */ var _auth__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ../../auth */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/auth.js");
+/* harmony import */ var _cbor__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ../../cbor */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/cbor.js");
+/* harmony import */ var _request_id__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ../../request_id */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/request_id.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ../../utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+/* harmony import */ var _transforms__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./transforms */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/transforms.js");
+/* harmony import */ var _types__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./types */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/types.js");
+
+
+
+
+
+
+
+
+
+
+var RequestStatusResponseStatus;
+(function (RequestStatusResponseStatus) {
+    RequestStatusResponseStatus["Received"] = "received";
+    RequestStatusResponseStatus["Processing"] = "processing";
+    RequestStatusResponseStatus["Replied"] = "replied";
+    RequestStatusResponseStatus["Rejected"] = "rejected";
+    RequestStatusResponseStatus["Unknown"] = "unknown";
+    RequestStatusResponseStatus["Done"] = "done";
+})(RequestStatusResponseStatus || (RequestStatusResponseStatus = {}));
+// Default delta for ingress expiry is 5 minutes.
+const DEFAULT_INGRESS_EXPIRY_DELTA_IN_MSECS = 5 * 60 * 1000;
+// Root public key for the IC, encoded as hex
+const IC_ROOT_KEY = '308182301d060d2b0601040182dc7c0503010201060c2b0601040182dc7c05030201036100814' +
+    'c0e6ec71fab583b08bd81373c255c3c371b2e84863c98a4f1e08b74235d14fb5d9c0cd546d968' +
+    '5f913a0c0b2cc5341583bf4b4392e467db96d65b9bb4cb717112f8472e0d5a4d14505ffd7484' +
+    'b01291091c5f87b98883463f98091a0baaae';
+// IC0 domain info
+const IC0_DOMAIN = 'ic0.app';
+const IC0_SUB_DOMAIN = '.ic0.app';
+const ICP0_DOMAIN = 'icp0.io';
+const ICP0_SUB_DOMAIN = '.icp0.io';
+const ICP_API_DOMAIN = 'icp-api.io';
+const ICP_API_SUB_DOMAIN = '.icp-api.io';
+class HttpDefaultFetchError extends _errors__WEBPACK_IMPORTED_MODULE_1__.AgentError {
+    constructor(message) {
+        super(message);
+        this.message = message;
+    }
+}
+class IdentityInvalidError extends _errors__WEBPACK_IMPORTED_MODULE_1__.AgentError {
+    constructor(message) {
+        super(message);
+        this.message = message;
+    }
+}
+function getDefaultFetch() {
+    let defaultFetch;
+    if (typeof window !== 'undefined') {
+        // Browser context
+        if (window.fetch) {
+            defaultFetch = window.fetch.bind(window);
+        }
+        else {
+            throw new HttpDefaultFetchError('Fetch implementation was not available. You appear to be in a browser context, but window.fetch was not present.');
+        }
+    }
+    else if (typeof __webpack_require__.g !== 'undefined') {
+        // Node context
+        if (__webpack_require__.g.fetch) {
+            defaultFetch = __webpack_require__.g.fetch.bind(__webpack_require__.g);
+        }
+        else {
+            throw new HttpDefaultFetchError('Fetch implementation was not available. You appear to be in a Node.js context, but global.fetch was not available.');
+        }
+    }
+    else if (typeof self !== 'undefined') {
+        if (self.fetch) {
+            defaultFetch = self.fetch.bind(self);
+        }
+    }
+    if (defaultFetch) {
+        return defaultFetch;
+    }
+    throw new HttpDefaultFetchError('Fetch implementation was not available. Please provide fetch to the HttpAgent constructor, or ensure it is available in the window or global context.');
+}
+// A HTTP agent allows users to interact with a client of the internet computer
+// using the available methods. It exposes an API that closely follows the
+// public view of the internet computer, and is not intended to be exposed
+// directly to the majority of users due to its low-level interface.
+//
+// There is a pipeline to apply transformations to the request before sending
+// it to the client. This is to decouple signature, nonce generation and
+// other computations so that this class can stay as simple as possible while
+// allowing extensions.
+class HttpAgent {
+    constructor(options = {}) {
+        this.rootKey = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_5__.fromHex)(IC_ROOT_KEY);
+        this._pipeline = [];
+        this._timeDiffMsecs = 0;
+        this._rootKeyFetched = false;
+        this._retryTimes = 3; // Retry requests 3 times before erroring by default
+        this._isAgent = true;
+        if (options.source) {
+            if (!(options.source instanceof HttpAgent)) {
+                throw new Error("An Agent's source can only be another HttpAgent");
+            }
+            this._pipeline = [...options.source._pipeline];
+            this._identity = options.source._identity;
+            this._fetch = options.source._fetch;
+            this._host = options.source._host;
+            this._credentials = options.source._credentials;
+        }
+        else {
+            this._fetch = options.fetch || getDefaultFetch() || fetch.bind(__webpack_require__.g);
+            this._fetchOptions = options.fetchOptions;
+            this._callOptions = options.callOptions;
+        }
+        if (options.host !== undefined) {
+            if (!options.host.match(/^[a-z]+:/) && typeof window !== 'undefined') {
+                this._host = new URL(window.location.protocol + '//' + options.host);
+            }
+            else {
+                this._host = new URL(options.host);
+            }
+        }
+        else if (options.source !== undefined) {
+            // Safe to ignore here.
+            this._host = options.source._host;
+        }
+        else {
+            const location = typeof window !== 'undefined' ? window.location : undefined;
+            if (!location) {
+                throw new Error('Must specify a host to connect to.');
+            }
+            this._host = new URL(location + '');
+        }
+        // Default is 3, only set if option is provided
+        if (options.retryTimes !== undefined) {
+            this._retryTimes = options.retryTimes;
+        }
+        // Rewrite to avoid redirects
+        if (this._host.hostname.endsWith(IC0_SUB_DOMAIN)) {
+            this._host.hostname = IC0_DOMAIN;
+        }
+        else if (this._host.hostname.endsWith(ICP0_SUB_DOMAIN)) {
+            this._host.hostname = ICP0_DOMAIN;
+        }
+        else if (this._host.hostname.endsWith(ICP_API_SUB_DOMAIN)) {
+            this._host.hostname = ICP_API_DOMAIN;
+        }
+        if (options.credentials) {
+            const { name, password } = options.credentials;
+            this._credentials = `${name}${password ? ':' + password : ''}`;
+        }
+        this._identity = Promise.resolve(options.identity || new _auth__WEBPACK_IMPORTED_MODULE_2__.AnonymousIdentity());
+        // Add a nonce transform to ensure calls are unique
+        if (!options.disableNonce) {
+            this.addTransform((0,_transforms__WEBPACK_IMPORTED_MODULE_6__.makeNonceTransform)(_types__WEBPACK_IMPORTED_MODULE_7__.makeNonce));
+        }
+    }
+    isLocal() {
+        const hostname = this._host.hostname;
+        return hostname === '127.0.0.1' || hostname.endsWith('localhost');
+    }
+    addTransform(fn, priority = fn.priority || 0) {
+        // Keep the pipeline sorted at all time, by priority.
+        const i = this._pipeline.findIndex(x => (x.priority || 0) < priority);
+        this._pipeline.splice(i >= 0 ? i : this._pipeline.length, 0, Object.assign(fn, { priority }));
+    }
+    async getPrincipal() {
+        if (!this._identity) {
+            throw new IdentityInvalidError("This identity has expired due this application's security policy. Please refresh your authentication.");
+        }
+        return (await this._identity).getPrincipal();
+    }
+    async call(canisterId, options, identity) {
+        const id = await (identity !== undefined ? await identity : await this._identity);
+        if (!id) {
+            throw new IdentityInvalidError("This identity has expired due this application's security policy. Please refresh your authentication.");
+        }
+        const canister = _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.from(canisterId);
+        const ecid = options.effectiveCanisterId
+            ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.from(options.effectiveCanisterId)
+            : canister;
+        const sender = id.getPrincipal() || _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.anonymous();
+        let ingress_expiry = new _transforms__WEBPACK_IMPORTED_MODULE_6__.Expiry(DEFAULT_INGRESS_EXPIRY_DELTA_IN_MSECS);
+        // If the value is off by more than 30 seconds, reconcile system time with the network
+        if (Math.abs(this._timeDiffMsecs) > 1000 * 30) {
+            ingress_expiry = new _transforms__WEBPACK_IMPORTED_MODULE_6__.Expiry(DEFAULT_INGRESS_EXPIRY_DELTA_IN_MSECS + this._timeDiffMsecs);
+        }
+        const submit = {
+            request_type: _types__WEBPACK_IMPORTED_MODULE_7__.SubmitRequestType.Call,
+            canister_id: canister,
+            method_name: options.methodName,
+            arg: options.arg,
+            sender,
+            ingress_expiry,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let transformedRequest = (await this._transform({
+            request: {
+                body: null,
+                method: 'POST',
+                headers: new Headers(Object.assign({ 'Content-Type': 'application/cbor' }, (this._credentials ? { Authorization: 'Basic ' + btoa(this._credentials) } : {}))),
+            },
+            endpoint: "call" /* Endpoint.Call */,
+            body: submit,
+        }));
+        // Apply transform for identity.
+        transformedRequest = await id.transformRequest(transformedRequest);
+        const body = _cbor__WEBPACK_IMPORTED_MODULE_3__.encode(transformedRequest.body);
+        // Run both in parallel. The fetch is quite expensive, so we have plenty of time to
+        // calculate the requestId locally.
+        const request = this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/canister/${ecid.toText()}/call`, this._host), Object.assign(Object.assign(Object.assign({}, this._callOptions), transformedRequest.request), { body })));
+        const [response, requestId] = await Promise.all([request, (0,_request_id__WEBPACK_IMPORTED_MODULE_4__.requestIdOf)(submit)]);
+        return {
+            requestId,
+            response: {
+                ok: response.ok,
+                status: response.status,
+                statusText: response.statusText,
+            },
+        };
+    }
+    async _requestAndRetry(request, tries = 0) {
+        if (tries > this._retryTimes && this._retryTimes !== 0) {
+            throw new Error(`AgentError: Exceeded configured limit of ${this._retryTimes} retry attempts. Please check your network connection or try again in a few moments`);
+        }
+        const response = await request();
+        if (!response.ok) {
+            const responseText = await response.clone().text();
+            const errorMessage = `Server returned an error:\n` +
+                `  Code: ${response.status} (${response.statusText})\n` +
+                `  Body: ${responseText}\n`;
+            if (this._retryTimes > tries) {
+                console.warn(errorMessage + `  Retrying request.`);
+                return await this._requestAndRetry(request, tries + 1);
+            }
+            else {
+                throw new Error(errorMessage);
+            }
+        }
+        return response;
+    }
+    async query(canisterId, fields, identity) {
+        const id = await (identity !== undefined ? await identity : await this._identity);
+        if (!id) {
+            throw new IdentityInvalidError("This identity has expired due this application's security policy. Please refresh your authentication.");
+        }
+        const canister = typeof canisterId === 'string' ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.fromText(canisterId) : canisterId;
+        const sender = (id === null || id === void 0 ? void 0 : id.getPrincipal()) || _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.anonymous();
+        const request = {
+            request_type: "query" /* ReadRequestType.Query */,
+            canister_id: canister,
+            method_name: fields.methodName,
+            arg: fields.arg,
+            sender,
+            ingress_expiry: new _transforms__WEBPACK_IMPORTED_MODULE_6__.Expiry(DEFAULT_INGRESS_EXPIRY_DELTA_IN_MSECS),
+        };
+        // TODO: remove this any. This can be a Signed or UnSigned request.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let transformedRequest = await this._transform({
+            request: {
+                method: 'POST',
+                headers: new Headers(Object.assign({ 'Content-Type': 'application/cbor' }, (this._credentials ? { Authorization: 'Basic ' + btoa(this._credentials) } : {}))),
+            },
+            endpoint: "read" /* Endpoint.Query */,
+            body: request,
+        });
+        // Apply transform for identity.
+        transformedRequest = await (id === null || id === void 0 ? void 0 : id.transformRequest(transformedRequest));
+        const body = _cbor__WEBPACK_IMPORTED_MODULE_3__.encode(transformedRequest.body);
+        const response = await this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/canister/${canister.toText()}/query`, this._host), Object.assign(Object.assign(Object.assign({}, this._fetchOptions), transformedRequest.request), { body })));
+        return _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await response.arrayBuffer());
+    }
+    async createReadStateRequest(fields, identity) {
+        const id = await (identity !== undefined ? await identity : await this._identity);
+        if (!id) {
+            throw new IdentityInvalidError("This identity has expired due this application's security policy. Please refresh your authentication.");
+        }
+        const sender = (id === null || id === void 0 ? void 0 : id.getPrincipal()) || _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.anonymous();
+        // TODO: remove this any. This can be a Signed or UnSigned request.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const transformedRequest = await this._transform({
+            request: {
+                method: 'POST',
+                headers: new Headers(Object.assign({ 'Content-Type': 'application/cbor' }, (this._credentials ? { Authorization: 'Basic ' + btoa(this._credentials) } : {}))),
+            },
+            endpoint: "read_state" /* Endpoint.ReadState */,
+            body: {
+                request_type: "read_state" /* ReadRequestType.ReadState */,
+                paths: fields.paths,
+                sender,
+                ingress_expiry: new _transforms__WEBPACK_IMPORTED_MODULE_6__.Expiry(DEFAULT_INGRESS_EXPIRY_DELTA_IN_MSECS),
+            },
+        });
+        // Apply transform for identity.
+        return id === null || id === void 0 ? void 0 : id.transformRequest(transformedRequest);
+    }
+    async readState(canisterId, fields, identity, 
+    // eslint-disable-next-line
+    request) {
+        const canister = typeof canisterId === 'string' ? _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.fromText(canisterId) : canisterId;
+        const transformedRequest = request !== null && request !== void 0 ? request : (await this.createReadStateRequest(fields, identity));
+        const body = _cbor__WEBPACK_IMPORTED_MODULE_3__.encode(transformedRequest.body);
+        // TODO - https://dfinity.atlassian.net/browse/SDK-1092
+        const response = await this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/canister/${canister}/read_state`, this._host), Object.assign(Object.assign(Object.assign({}, this._fetchOptions), transformedRequest.request), { body })));
+        if (!response.ok) {
+            throw new Error(`Server returned an error:\n` +
+                `  Code: ${response.status} (${response.statusText})\n` +
+                `  Body: ${await response.text()}\n`);
+        }
+        return _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await response.arrayBuffer());
+    }
+    /**
+     * Allows agent to sync its time with the network. Can be called during intialization or mid-lifecycle if the device's clock has drifted away from the network time. This is necessary to set the Expiry for a request
+     * @param {PrincipalLike} canisterId - Pass a canister ID if you need to sync the time with a particular replica. Uses the management canister by default
+     */
+    async syncTime(canisterId) {
+        const CanisterStatus = await Promise.resolve(/*! import() */).then(__webpack_require__.bind(__webpack_require__, /*! ../../canisterStatus */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisterStatus/index.js"));
+        const callTime = Date.now();
+        try {
+            if (!canisterId) {
+                console.log('Syncing time with the IC. No canisterId provided, so falling back to ryjl3-tyaaa-aaaaa-aaaba-cai');
+            }
+            const status = await CanisterStatus.request({
+                // Fall back with canisterId of the ICP Ledger
+                canisterId: canisterId !== null && canisterId !== void 0 ? canisterId : _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.from('ryjl3-tyaaa-aaaaa-aaaba-cai'),
+                agent: this,
+                paths: ['time'],
+            });
+            const replicaTime = status.get('time');
+            if (replicaTime) {
+                this._timeDiffMsecs = Number(replicaTime) - Number(callTime);
+            }
+        }
+        catch (error) {
+            console.error('Caught exception while attempting to sync time:', error);
+        }
+    }
+    async status() {
+        const headers = this._credentials
+            ? {
+                Authorization: 'Basic ' + btoa(this._credentials),
+            }
+            : {};
+        const response = await this._requestAndRetry(() => this._fetch('' + new URL(`/api/v2/status`, this._host), Object.assign({ headers }, this._fetchOptions)));
+        return _cbor__WEBPACK_IMPORTED_MODULE_3__.decode(await response.arrayBuffer());
+    }
+    async fetchRootKey() {
+        if (!this._rootKeyFetched) {
+            // Hex-encoded version of the replica root key
+            this.rootKey = (await this.status()).root_key;
+            this._rootKeyFetched = true;
+        }
+        return this.rootKey;
+    }
+    invalidateIdentity() {
+        this._identity = null;
+    }
+    replaceIdentity(identity) {
+        this._identity = Promise.resolve(identity);
+    }
+    _transform(request) {
+        let p = Promise.resolve(request);
+        for (const fn of this._pipeline) {
+            p = p.then(r => fn(r).then(r2 => r2 || r));
+        }
+        return p;
+    }
+}
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/transforms.js":
+/*!***************************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/transforms.js ***!
+  \***************************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Expiry: () => (/* binding */ Expiry),
+/* harmony export */   makeExpiryTransform: () => (/* binding */ makeExpiryTransform),
+/* harmony export */   makeNonceTransform: () => (/* binding */ makeNonceTransform)
+/* harmony export */ });
+/* harmony import */ var _dfinity_candid__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/candid */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/index.js");
+/* harmony import */ var simple_cbor__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! simple-cbor */ "./node_modules/simple-cbor/src/index.js");
+/* harmony import */ var simple_cbor__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(simple_cbor__WEBPACK_IMPORTED_MODULE_1__);
+/* harmony import */ var _types__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./types */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/types.js");
+
+
+
+const NANOSECONDS_PER_MILLISECONDS = BigInt(1000000);
+const REPLICA_PERMITTED_DRIFT_MILLISECONDS = BigInt(60 * 1000);
+class Expiry {
+    constructor(deltaInMSec) {
+        // Use bigint because it can overflow the maximum number allowed in a double float.
+        this._value =
+            (BigInt(Date.now()) + BigInt(deltaInMSec) - REPLICA_PERMITTED_DRIFT_MILLISECONDS) *
+                NANOSECONDS_PER_MILLISECONDS;
+    }
+    toCBOR() {
+        // TODO: change this to take the minimum amount of space (it always takes 8 bytes now).
+        return simple_cbor__WEBPACK_IMPORTED_MODULE_1__.value.u64(this._value.toString(16), 16);
+    }
+    toHash() {
+        return (0,_dfinity_candid__WEBPACK_IMPORTED_MODULE_0__.lebEncode)(this._value);
+    }
+}
+/**
+ * Create a Nonce transform, which takes a function that returns a Buffer, and adds it
+ * as the nonce to every call requests.
+ * @param nonceFn A function that returns a buffer. By default uses a semi-random method.
+ */
+function makeNonceTransform(nonceFn = _types__WEBPACK_IMPORTED_MODULE_2__.makeNonce) {
+    return async (request) => {
+        const nonce = nonceFn();
+        // Nonce needs to be inserted into the header for all requests, to enable logs to be correlated with requests.
+        const headers = request.request.headers ? new Headers(request.request.headers) : new Headers();
+        // TODO: uncomment this when the http proxy supports it.
+        // headers.set('X-IC-Request-ID', toHex(new Uint8Array(nonce)));
+        request.request.headers = headers;
+        // Nonce only needs to be inserted into the body for async calls, to prevent replay attacks.
+        if (request.endpoint === "call" /* Endpoint.Call */) {
+            request.body.nonce = nonceFn();
+        }
+    };
+}
+/**
+ * Create a transform that adds a delay (by default 5 minutes) to the expiry.
+ *
+ * @param delayInMilliseconds The delay to add to the call time, in milliseconds.
+ */
+function makeExpiryTransform(delayInMilliseconds) {
+    return async (request) => {
+        request.body.ingress_expiry = new Expiry(delayInMilliseconds);
+    };
+}
+//# sourceMappingURL=transforms.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/types.js":
+/*!**********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/types.js ***!
+  \**********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   SubmitRequestType: () => (/* binding */ SubmitRequestType),
+/* harmony export */   makeNonce: () => (/* binding */ makeNonce)
+/* harmony export */ });
+// tslint:enable:camel-case
+// The types of values allowed in the `request_type` field for submit requests.
+var SubmitRequestType;
+(function (SubmitRequestType) {
+    SubmitRequestType["Call"] = "call";
+})(SubmitRequestType || (SubmitRequestType = {}));
+/**
+ * Create a random Nonce, based on date and a random suffix.
+ */
+function makeNonce() {
+    // Encode 128 bits.
+    const buffer = new ArrayBuffer(16);
+    const view = new DataView(buffer);
+    const now = BigInt(+Date.now());
+    const randHi = Math.floor(Math.random() * 0xffffffff);
+    const randLo = Math.floor(Math.random() * 0xffffffff);
+    // Fix for IOS < 14.8 setBigUint64 absence
+    if (typeof view.setBigUint64 === 'function') {
+        view.setBigUint64(0, now);
+    }
+    else {
+        const TWO_TO_THE_32 = BigInt(1) << BigInt(32);
+        view.setUint32(0, Number(now >> BigInt(32)));
+        view.setUint32(4, Number(now % TWO_TO_THE_32));
+    }
+    view.setUint32(8, randHi);
+    view.setUint32(12, randLo);
+    return buffer;
+}
+//# sourceMappingURL=types.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/index.js":
+/*!*****************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/index.js ***!
+  \*****************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Expiry: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.Expiry),
+/* harmony export */   HttpAgent: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.HttpAgent),
+/* harmony export */   IdentityInvalidError: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.IdentityInvalidError),
+/* harmony export */   ProxyAgent: () => (/* reexport safe */ _proxy__WEBPACK_IMPORTED_MODULE_2__.ProxyAgent),
+/* harmony export */   ProxyMessageKind: () => (/* reexport safe */ _proxy__WEBPACK_IMPORTED_MODULE_2__.ProxyMessageKind),
+/* harmony export */   ProxyStubAgent: () => (/* reexport safe */ _proxy__WEBPACK_IMPORTED_MODULE_2__.ProxyStubAgent),
+/* harmony export */   ReplicaRejectCode: () => (/* reexport safe */ _api__WEBPACK_IMPORTED_MODULE_0__.ReplicaRejectCode),
+/* harmony export */   RequestStatusResponseStatus: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.RequestStatusResponseStatus),
+/* harmony export */   getDefaultAgent: () => (/* binding */ getDefaultAgent),
+/* harmony export */   makeExpiryTransform: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.makeExpiryTransform),
+/* harmony export */   makeNonce: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.makeNonce),
+/* harmony export */   makeNonceTransform: () => (/* reexport safe */ _http__WEBPACK_IMPORTED_MODULE_1__.makeNonceTransform)
+/* harmony export */ });
+/* harmony import */ var _api__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./api */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/api.js");
+/* harmony import */ var _http__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./http */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/index.js");
+/* harmony import */ var _proxy__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./proxy */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/proxy.js");
+
+
+
+function getDefaultAgent() {
+    const agent = typeof window === 'undefined'
+        ? typeof __webpack_require__.g === 'undefined'
+            ? typeof self === 'undefined'
+                ? undefined
+                : self.ic.agent
+            : __webpack_require__.g.ic.agent
+        : window.ic.agent;
+    if (!agent) {
+        throw new Error('No Agent could be found.');
+    }
+    return agent;
+}
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/proxy.js":
+/*!*****************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/proxy.js ***!
+  \*****************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   ProxyAgent: () => (/* binding */ ProxyAgent),
+/* harmony export */   ProxyMessageKind: () => (/* binding */ ProxyMessageKind),
+/* harmony export */   ProxyStubAgent: () => (/* binding */ ProxyStubAgent)
+/* harmony export */ });
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+
+var ProxyMessageKind;
+(function (ProxyMessageKind) {
+    ProxyMessageKind["Error"] = "err";
+    ProxyMessageKind["GetPrincipal"] = "gp";
+    ProxyMessageKind["GetPrincipalResponse"] = "gpr";
+    ProxyMessageKind["Query"] = "q";
+    ProxyMessageKind["QueryResponse"] = "qr";
+    ProxyMessageKind["Call"] = "c";
+    ProxyMessageKind["CallResponse"] = "cr";
+    ProxyMessageKind["ReadState"] = "rs";
+    ProxyMessageKind["ReadStateResponse"] = "rsr";
+    ProxyMessageKind["Status"] = "s";
+    ProxyMessageKind["StatusResponse"] = "sr";
+})(ProxyMessageKind || (ProxyMessageKind = {}));
+// A Stub Agent that forwards calls to another Agent implementation.
+class ProxyStubAgent {
+    constructor(_frontend, _agent) {
+        this._frontend = _frontend;
+        this._agent = _agent;
+    }
+    onmessage(msg) {
+        switch (msg.type) {
+            case ProxyMessageKind.GetPrincipal:
+                this._agent.getPrincipal().then(response => {
+                    this._frontend({
+                        id: msg.id,
+                        type: ProxyMessageKind.GetPrincipalResponse,
+                        response: response.toText(),
+                    });
+                });
+                break;
+            case ProxyMessageKind.Query:
+                this._agent.query(...msg.args).then(response => {
+                    this._frontend({
+                        id: msg.id,
+                        type: ProxyMessageKind.QueryResponse,
+                        response,
+                    });
+                });
+                break;
+            case ProxyMessageKind.Call:
+                this._agent.call(...msg.args).then(response => {
+                    this._frontend({
+                        id: msg.id,
+                        type: ProxyMessageKind.CallResponse,
+                        response,
+                    });
+                });
+                break;
+            case ProxyMessageKind.ReadState:
+                this._agent.readState(...msg.args).then(response => {
+                    this._frontend({
+                        id: msg.id,
+                        type: ProxyMessageKind.ReadStateResponse,
+                        response,
+                    });
+                });
+                break;
+            case ProxyMessageKind.Status:
+                this._agent.status().then(response => {
+                    this._frontend({
+                        id: msg.id,
+                        type: ProxyMessageKind.StatusResponse,
+                        response,
+                    });
+                });
+                break;
+            default:
+                throw new Error(`Invalid message received: ${JSON.stringify(msg)}`);
+        }
+    }
+}
+// An Agent that forwards calls to a backend. The calls are serialized
+class ProxyAgent {
+    constructor(_backend) {
+        this._backend = _backend;
+        this._nextId = 0;
+        this._pendingCalls = new Map();
+        this.rootKey = null;
+    }
+    onmessage(msg) {
+        const id = msg.id;
+        const maybePromise = this._pendingCalls.get(id);
+        if (!maybePromise) {
+            throw new Error('A proxy get the same message twice...');
+        }
+        this._pendingCalls.delete(id);
+        const [resolve, reject] = maybePromise;
+        switch (msg.type) {
+            case ProxyMessageKind.Error:
+                return reject(msg.error);
+            case ProxyMessageKind.GetPrincipalResponse:
+            case ProxyMessageKind.CallResponse:
+            case ProxyMessageKind.QueryResponse:
+            case ProxyMessageKind.ReadStateResponse:
+            case ProxyMessageKind.StatusResponse:
+                return resolve(msg.response);
+            default:
+                throw new Error(`Invalid message being sent to ProxyAgent: ${JSON.stringify(msg)}`);
+        }
+    }
+    async getPrincipal() {
+        return this._sendAndWait({
+            id: this._nextId++,
+            type: ProxyMessageKind.GetPrincipal,
+        }).then(principal => {
+            if (typeof principal !== 'string') {
+                throw new Error('Invalid principal received.');
+            }
+            return _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.fromText(principal);
+        });
+    }
+    readState(canisterId, fields) {
+        return this._sendAndWait({
+            id: this._nextId++,
+            type: ProxyMessageKind.ReadState,
+            args: [canisterId.toString(), fields],
+        });
+    }
+    call(canisterId, fields) {
+        return this._sendAndWait({
+            id: this._nextId++,
+            type: ProxyMessageKind.Call,
+            args: [canisterId.toString(), fields],
+        });
+    }
+    status() {
+        return this._sendAndWait({
+            id: this._nextId++,
+            type: ProxyMessageKind.Status,
+        });
+    }
+    query(canisterId, fields) {
+        return this._sendAndWait({
+            id: this._nextId++,
+            type: ProxyMessageKind.Query,
+            args: [canisterId.toString(), fields],
+        });
+    }
+    async _sendAndWait(msg) {
+        return new Promise((resolve, reject) => {
+            this._pendingCalls.set(msg.id, [resolve, reject]);
+            this._backend(msg);
+        });
+    }
+    async fetchRootKey() {
+        // Hex-encoded version of the replica root key
+        const rootKey = (await this.status()).root_key;
+        this.rootKey = rootKey;
+        return rootKey;
+    }
+}
+//# sourceMappingURL=proxy.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/auth.js":
+/*!**********************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/auth.js ***!
+  \**********************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   AnonymousIdentity: () => (/* binding */ AnonymousIdentity),
+/* harmony export */   SignIdentity: () => (/* binding */ SignIdentity),
+/* harmony export */   createIdentityDescriptor: () => (/* binding */ createIdentityDescriptor)
+/* harmony export */ });
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _request_id__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./request_id */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/request_id.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+var __rest = (undefined && undefined.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
+
+
+
+const domainSeparator = new TextEncoder().encode('\x0Aic-request');
+/**
+ * An Identity that can sign blobs.
+ */
+class SignIdentity {
+    /**
+     * Get the principal represented by this identity. Normally should be a
+     * `Principal.selfAuthenticating()`.
+     */
+    getPrincipal() {
+        if (!this._principal) {
+            this._principal = _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.selfAuthenticating(new Uint8Array(this.getPublicKey().toDer()));
+        }
+        return this._principal;
+    }
+    /**
+     * Transform a request into a signed version of the request. This is done last
+     * after the transforms on the body of a request. The returned object can be
+     * anything, but must be serializable to CBOR.
+     * @param request - internet computer request to transform
+     */
+    async transformRequest(request) {
+        const { body } = request, fields = __rest(request, ["body"]);
+        const requestId = await (0,_request_id__WEBPACK_IMPORTED_MODULE_1__.requestIdOf)(body);
+        return Object.assign(Object.assign({}, fields), { body: {
+                content: body,
+                sender_pubkey: this.getPublicKey().toDer(),
+                sender_sig: await this.sign((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_2__.concat)(domainSeparator, requestId)),
+            } });
+    }
+}
+class AnonymousIdentity {
+    getPrincipal() {
+        return _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.anonymous();
+    }
+    async transformRequest(request) {
+        return Object.assign(Object.assign({}, request), { body: { content: request.body } });
+    }
+}
+/**
+ * Create an IdentityDescriptor from a @dfinity/identity Identity
+ * @param identity - identity describe in returned descriptor
+ */
+function createIdentityDescriptor(identity) {
+    const identityIndicator = 'getPublicKey' in identity
+        ? { type: 'PublicKeyIdentity', publicKey: (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_2__.toHex)(identity.getPublicKey().toDer()) }
+        : { type: 'AnonymousIdentity' };
+    return identityIndicator;
+}
+//# sourceMappingURL=auth.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisterStatus/index.js":
+/*!**************************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisterStatus/index.js ***!
+  \**************************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   encodePath: () => (/* binding */ encodePath),
+/* harmony export */   request: () => (/* binding */ request)
+/* harmony export */ });
+/* harmony import */ var _dfinity_candid__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/candid */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/index.js");
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _errors__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ../errors */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/errors.js");
+/* harmony import */ var _certificate__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ../certificate */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/certificate.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ../utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+/* harmony import */ var _cbor__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ../cbor */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/cbor.js");
+/** @module CanisterStatus */
+
+
+
+
+
+
+/**
+ *
+ * @param {CanisterStatusOptions} options {@link CanisterStatusOptions}
+ * @param {CanisterStatusOptions['canisterId']} options.canisterId {@link Principal}
+ * @param {CanisterStatusOptions['agent']} options.agent {@link HttpAgent} optional authenticated agent to use to make the canister request. Useful for accessing private metadata under icp:private
+ * @param {CanisterStatusOptions['paths']} options.paths {@link Path[]}
+ * @returns {Status} object populated with data from the requested paths
+ * @example
+ * const status = await canisterStatus({
+ *   paths: ['controllers', 'candid'],
+ *   ...options
+ * });
+ *
+ * const controllers = status.get('controllers');
+ */
+const request = async (options) => {
+    const { canisterId, agent, paths } = options;
+    const uniquePaths = [...new Set(paths)];
+    // Map path options to their correct formats
+    const encodedPaths = uniquePaths.map(path => {
+        return encodePath(path, canisterId);
+    });
+    const status = new Map();
+    const promises = uniquePaths.map((path, index) => {
+        return (async () => {
+            var _a;
+            try {
+                const response = await agent.readState(canisterId, {
+                    paths: [encodedPaths[index]],
+                });
+                const cert = await _certificate__WEBPACK_IMPORTED_MODULE_3__.Certificate.create({
+                    certificate: response.certificate,
+                    rootKey: agent.rootKey,
+                    canisterId: canisterId,
+                });
+                const data = cert.lookup(encodePath(uniquePaths[index], canisterId));
+                if (!data) {
+                    // Typically, the cert lookup will throw
+                    console.warn(`Expected to find result for path ${path}, but instead found nothing.`);
+                    if (typeof path === 'string') {
+                        status.set(path, null);
+                    }
+                    else {
+                        status.set(path.key, null);
+                    }
+                }
+                else {
+                    switch (path) {
+                        case 'time': {
+                            status.set(path, decodeTime(data));
+                            break;
+                        }
+                        case 'controllers': {
+                            status.set(path, decodeControllers(data));
+                            break;
+                        }
+                        case 'module_hash': {
+                            status.set(path, decodeHex(data));
+                            break;
+                        }
+                        case 'candid': {
+                            status.set(path, new TextDecoder().decode(data));
+                            break;
+                        }
+                        default: {
+                            // Check for CustomPath signature
+                            if (typeof path !== 'string' && 'key' in path && 'path' in path) {
+                                switch (path.decodeStrategy) {
+                                    case 'raw':
+                                        status.set(path.key, data);
+                                        break;
+                                    case 'leb128': {
+                                        status.set(path.key, decodeLeb128(data));
+                                        break;
+                                    }
+                                    case 'cbor': {
+                                        status.set(path.key, decodeCbor(data));
+                                        break;
+                                    }
+                                    case 'hex': {
+                                        status.set(path.key, decodeHex(data));
+                                        break;
+                                    }
+                                    case 'utf-8': {
+                                        status.set(path.key, decodeUtf8(data));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (error) {
+                // Break on signature verification errors
+                if ((_a = error === null || error === void 0 ? void 0 : error.message) === null || _a === void 0 ? void 0 : _a.includes('Invalid certificate')) {
+                    throw new _errors__WEBPACK_IMPORTED_MODULE_2__.AgentError(error.message);
+                }
+                if (typeof path !== 'string' && 'key' in path && 'path' in path) {
+                    status.set(path.key, null);
+                }
+                else {
+                    status.set(path, null);
+                }
+                console.group();
+                console.warn(`Expected to find result for path ${path}, but instead found nothing.`);
+                console.warn(error);
+                console.groupEnd();
+            }
+        })();
+    });
+    // Fetch all values separately, as each option can fail
+    await Promise.all(promises);
+    return status;
+};
+const encodePath = (path, canisterId) => {
+    const encoder = new TextEncoder();
+    const encode = (arg) => {
+        return new DataView(encoder.encode(arg).buffer).buffer;
+    };
+    const canisterBuffer = new DataView(canisterId.toUint8Array().buffer).buffer;
+    switch (path) {
+        case 'time':
+            return [encode('time')];
+        case 'controllers':
+            return [encode('canister'), canisterBuffer, encode('controllers')];
+        case 'module_hash':
+            return [encode('canister'), canisterBuffer, encode('module_hash')];
+        case 'subnet':
+            return [encode('subnet')];
+        case 'candid':
+            return [encode('canister'), canisterBuffer, encode('metadata'), encode('candid:service')];
+        default: {
+            // Check for CustomPath signature
+            if ('key' in path && 'path' in path) {
+                // For simplified metadata queries
+                if (typeof path['path'] === 'string' || path['path'] instanceof ArrayBuffer) {
+                    const metaPath = path.path;
+                    const encoded = typeof metaPath === 'string' ? encode(metaPath) : metaPath;
+                    return [encode('canister'), canisterBuffer, encode('metadata'), encoded];
+                    // For non-metadata, return the provided custompath
+                }
+                else {
+                    return path['path'];
+                }
+            }
+        }
+    }
+    throw new Error(`An unexpeected error was encountered while encoding your path for canister status. Please ensure that your path, ${path} was formatted correctly.`);
+};
+const decodeHex = (buf) => {
+    return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_4__.toHex)(buf);
+};
+const decodeLeb128 = (buf) => {
+    return (0,_dfinity_candid__WEBPACK_IMPORTED_MODULE_0__.lebDecode)(new _dfinity_candid__WEBPACK_IMPORTED_MODULE_0__.PipeArrayBuffer(buf));
+};
+const decodeCbor = (buf) => {
+    return _cbor__WEBPACK_IMPORTED_MODULE_5__.decode(buf);
+};
+const decodeUtf8 = (buf) => {
+    return new TextDecoder().decode(buf);
+};
+// time is a LEB128-encoded Nat
+const decodeTime = (buf) => {
+    const decoded = decodeLeb128(buf);
+    return new Date(Number(decoded / BigInt(1000000)));
+};
+// Controllers are CBOR-encoded buffers, starting with a Tag we don't need
+const decodeControllers = (buf) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [tag, ...controllersRaw] = decodeCbor(buf);
+    return controllersRaw.map((buf) => {
+        return _dfinity_principal__WEBPACK_IMPORTED_MODULE_1__.Principal.fromUint8Array(new Uint8Array(buf));
+    });
+};
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/asset.js":
+/*!*********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/asset.js ***!
+  \*********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   createAssetCanisterActor: () => (/* binding */ createAssetCanisterActor)
+/* harmony export */ });
+/* harmony import */ var _actor__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../actor */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/actor.js");
+/* harmony import */ var _asset_idl__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./asset_idl */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/asset_idl.js");
+
+
+/* tslint:enable */
+/**
+ * Create a management canister actor.
+ * @param config
+ */
+function createAssetCanisterActor(config) {
+    return _actor__WEBPACK_IMPORTED_MODULE_0__.Actor.createActor(_asset_idl__WEBPACK_IMPORTED_MODULE_1__["default"], config);
+}
+//# sourceMappingURL=asset.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/asset_idl.js":
+/*!*************************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/asset_idl.js ***!
+  \*************************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/**
+ * This file is generated from the candid for asset management.
+ */
+/* tslint:disable */
+// @ts-ignore
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (({ IDL }) => {
+    return IDL.Service({
+        retrieve: IDL.Func([IDL.Text], [IDL.Vec(IDL.Nat8)], ['query']),
+        store: IDL.Func([IDL.Text, IDL.Vec(IDL.Nat8)], [], []),
+    });
+});
+//# sourceMappingURL=asset_idl.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/management_idl.js":
+/*!******************************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/management_idl.js ***!
+  \******************************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/**
+ * This file is generated from the candid for asset management.
+ */
+/* tslint:disable */
+// @ts-ignore
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (({ IDL }) => {
+    const canister_id = IDL.Principal;
+    const definite_canister_settings = IDL.Record({
+        controllers: IDL.Vec(IDL.Principal),
+        freezing_threshold: IDL.Nat,
+        memory_allocation: IDL.Nat,
+        compute_allocation: IDL.Nat,
+    });
+    const canister_settings = IDL.Record({
+        controllers: IDL.Opt(IDL.Vec(IDL.Principal)),
+        freezing_threshold: IDL.Opt(IDL.Nat),
+        memory_allocation: IDL.Opt(IDL.Nat),
+        compute_allocation: IDL.Opt(IDL.Nat),
+    });
+    const wasm_module = IDL.Vec(IDL.Nat8);
+    return IDL.Service({
+        canister_status: IDL.Func([IDL.Record({ canister_id: canister_id })], [
+            IDL.Record({
+                status: IDL.Variant({
+                    stopped: IDL.Null,
+                    stopping: IDL.Null,
+                    running: IDL.Null,
+                }),
+                memory_size: IDL.Nat,
+                cycles: IDL.Nat,
+                settings: definite_canister_settings,
+                module_hash: IDL.Opt(IDL.Vec(IDL.Nat8)),
+            }),
+        ], []),
+        create_canister: IDL.Func([IDL.Record({ settings: IDL.Opt(canister_settings) })], [IDL.Record({ canister_id: canister_id })], []),
+        delete_canister: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
+        deposit_cycles: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
+        install_code: IDL.Func([
+            IDL.Record({
+                arg: IDL.Vec(IDL.Nat8),
+                wasm_module: wasm_module,
+                mode: IDL.Variant({
+                    reinstall: IDL.Null,
+                    upgrade: IDL.Null,
+                    install: IDL.Null,
+                }),
+                canister_id: canister_id,
+            }),
+        ], [], []),
+        provisional_create_canister_with_cycles: IDL.Func([
+            IDL.Record({
+                settings: IDL.Opt(canister_settings),
+                amount: IDL.Opt(IDL.Nat),
+            }),
+        ], [IDL.Record({ canister_id: canister_id })], []),
+        provisional_top_up_canister: IDL.Func([IDL.Record({ canister_id: canister_id, amount: IDL.Nat })], [], []),
+        raw_rand: IDL.Func([], [IDL.Vec(IDL.Nat8)], []),
+        start_canister: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
+        stop_canister: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
+        uninstall_code: IDL.Func([IDL.Record({ canister_id: canister_id })], [], []),
+        update_settings: IDL.Func([
+            IDL.Record({
+                canister_id: IDL.Principal,
+                settings: canister_settings,
+            }),
+        ], [], []),
+    });
+});
+//# sourceMappingURL=management_idl.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/cbor.js":
+/*!**********************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/cbor.js ***!
+  \**********************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   CborTag: () => (/* binding */ CborTag),
+/* harmony export */   decode: () => (/* binding */ decode),
+/* harmony export */   encode: () => (/* binding */ encode)
+/* harmony export */ });
+/* harmony import */ var borc__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! borc */ "./node_modules/borc/src/index.js");
+/* harmony import */ var simple_cbor__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! simple-cbor */ "./node_modules/simple-cbor/src/index.js");
+/* harmony import */ var simple_cbor__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(simple_cbor__WEBPACK_IMPORTED_MODULE_1__);
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+// tslint:disable:max-classes-per-file
+// This file is based on:
+// tslint:disable-next-line: max-line-length
+// https://github.com/dfinity-lab/dfinity/blob/9bca65f8edd65701ea6bdb00e0752f9186bbc893/docs/spec/public/index.adoc#cbor-encoding-of-requests-and-responses
+
+
+
+
+// We are using hansl/simple-cbor for CBOR serialization, to avoid issues with
+// encoding the uint64 values that the HTTP handler of the client expects for
+// canister IDs. However, simple-cbor does not yet provide deserialization so
+// we are using `Uint8Array` so that we can use the dignifiedquire/borc CBOR
+// decoder.
+class PrincipalEncoder {
+    get name() {
+        return 'Principal';
+    }
+    get priority() {
+        return 0;
+    }
+    match(value) {
+        return value && value._isPrincipal === true;
+    }
+    encode(v) {
+        return simple_cbor__WEBPACK_IMPORTED_MODULE_1__.value.bytes(v.toUint8Array());
+    }
+}
+class BufferEncoder {
+    get name() {
+        return 'Buffer';
+    }
+    get priority() {
+        return 1;
+    }
+    match(value) {
+        return value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+    }
+    encode(v) {
+        return simple_cbor__WEBPACK_IMPORTED_MODULE_1__.value.bytes(new Uint8Array(v));
+    }
+}
+class BigIntEncoder {
+    get name() {
+        return 'BigInt';
+    }
+    get priority() {
+        return 1;
+    }
+    match(value) {
+        return typeof value === `bigint`;
+    }
+    encode(v) {
+        // Always use a bigint encoding.
+        if (v > BigInt(0)) {
+            return simple_cbor__WEBPACK_IMPORTED_MODULE_1__.value.tagged(2, simple_cbor__WEBPACK_IMPORTED_MODULE_1__.value.bytes((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_2__.fromHex)(v.toString(16))));
+        }
+        else {
+            return simple_cbor__WEBPACK_IMPORTED_MODULE_1__.value.tagged(3, simple_cbor__WEBPACK_IMPORTED_MODULE_1__.value.bytes((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_2__.fromHex)((BigInt('-1') * v).toString(16))));
+        }
+    }
+}
+const serializer = simple_cbor__WEBPACK_IMPORTED_MODULE_1__.SelfDescribeCborSerializer.withDefaultEncoders(true);
+serializer.addEncoder(new PrincipalEncoder());
+serializer.addEncoder(new BufferEncoder());
+serializer.addEncoder(new BigIntEncoder());
+var CborTag;
+(function (CborTag) {
+    CborTag[CborTag["Uint64LittleEndian"] = 71] = "Uint64LittleEndian";
+    CborTag[CborTag["Semantic"] = 55799] = "Semantic";
+})(CborTag || (CborTag = {}));
+/**
+ * Encode a JavaScript value into CBOR.
+ */
+function encode(value) {
+    return serializer.serialize(value);
+}
+function decodePositiveBigInt(buf) {
+    const len = buf.byteLength;
+    let res = BigInt(0);
+    for (let i = 0; i < len; i++) {
+        // tslint:disable-next-line:no-bitwise
+        res = res * BigInt(0x100) + BigInt(buf[i]);
+    }
+    return res;
+}
+// A BORC subclass that decodes byte strings to ArrayBuffer instead of the Buffer class.
+class Uint8ArrayDecoder extends borc__WEBPACK_IMPORTED_MODULE_0__.Decoder {
+    createByteString(raw) {
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_2__.concat)(...raw);
+    }
+    createByteStringFromHeap(start, end) {
+        if (start === end) {
+            return new ArrayBuffer(0);
+        }
+        return new Uint8Array(this._heap.slice(start, end));
+    }
+}
+function decode(input) {
+    const buffer = new Uint8Array(input);
+    const decoder = new Uint8ArrayDecoder({
+        size: buffer.byteLength,
+        tags: {
+            // Override tags 2 and 3 for BigInt support (borc supports only BigNumber).
+            2: val => decodePositiveBigInt(val),
+            3: val => -decodePositiveBigInt(val),
+            [CborTag.Semantic]: (value) => value,
+        },
+    });
+    return decoder.decodeFirst(buffer);
+}
+//# sourceMappingURL=cbor.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/certificate.js":
+/*!*****************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/certificate.js ***!
+  \*****************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Certificate: () => (/* binding */ Certificate),
+/* harmony export */   CertificateVerificationError: () => (/* binding */ CertificateVerificationError),
+/* harmony export */   hashTreeToString: () => (/* binding */ hashTreeToString),
+/* harmony export */   lookup_path: () => (/* binding */ lookup_path),
+/* harmony export */   reconstruct: () => (/* binding */ reconstruct)
+/* harmony export */ });
+/* harmony import */ var _cbor__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./cbor */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/cbor.js");
+/* harmony import */ var _errors__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./errors */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/errors.js");
+/* harmony import */ var _request_id__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./request_id */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/request_id.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _utils_bls__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./utils/bls */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/bls.js");
+
+
+
+
+
+
+/**
+ * A certificate may fail verification with respect to the provided public key
+ */
+class CertificateVerificationError extends _errors__WEBPACK_IMPORTED_MODULE_1__.AgentError {
+    constructor(reason) {
+        super(`Invalid certificate: ${reason}`);
+    }
+}
+/**
+ * Make a human readable string out of a hash tree.
+ * @param tree
+ */
+function hashTreeToString(tree) {
+    const indent = (s) => s
+        .split('\n')
+        .map(x => '  ' + x)
+        .join('\n');
+    function labelToString(label) {
+        const decoder = new TextDecoder(undefined, { fatal: true });
+        try {
+            return JSON.stringify(decoder.decode(label));
+        }
+        catch (e) {
+            return `data(...${label.byteLength} bytes)`;
+        }
+    }
+    switch (tree[0]) {
+        case 0 /* NodeId.Empty */:
+            return '()';
+        case 1 /* NodeId.Fork */: {
+            const left = hashTreeToString(tree[1]);
+            const right = hashTreeToString(tree[2]);
+            return `sub(\n left:\n${indent(left)}\n---\n right:\n${indent(right)}\n)`;
+        }
+        case 2 /* NodeId.Labeled */: {
+            const label = labelToString(tree[1]);
+            const sub = hashTreeToString(tree[2]);
+            return `label(\n label:\n${indent(label)}\n sub:\n${indent(sub)}\n)`;
+        }
+        case 3 /* NodeId.Leaf */: {
+            return `leaf(...${tree[1].byteLength} bytes)`;
+        }
+        case 4 /* NodeId.Pruned */: {
+            return `pruned(${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.toHex)(new Uint8Array(tree[1]))}`;
+        }
+        default: {
+            return `unknown(${JSON.stringify(tree[0])})`;
+        }
+    }
+}
+function isBufferEqual(a, b) {
+    if (a.byteLength !== b.byteLength) {
+        return false;
+    }
+    const a8 = new Uint8Array(a);
+    const b8 = new Uint8Array(b);
+    for (let i = 0; i < a8.length; i++) {
+        if (a8[i] !== b8[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+class Certificate {
+    constructor(certificate, _rootKey, _canisterId, _blsVerify) {
+        this._rootKey = _rootKey;
+        this._canisterId = _canisterId;
+        this._blsVerify = _blsVerify;
+        this.cert = _cbor__WEBPACK_IMPORTED_MODULE_0__.decode(new Uint8Array(certificate));
+    }
+    /**
+     * Create a new instance of a certificate, automatically verifying it. Throws a
+     * CertificateVerificationError if the certificate cannot be verified.
+     * @constructs {@link AuthClient}
+     * @param {CreateCertificateOptions} options
+     * @see {@link CreateCertificateOptions}
+     * @param {ArrayBuffer} options.certificate The bytes of the certificate
+     * @param {ArrayBuffer} options.rootKey The root key to verify against
+     * @param {Principal} options.canisterId The effective or signing canister ID
+     * @throws {CertificateVerificationError}
+     */
+    static async create(options) {
+        let blsVerify = options.blsVerify;
+        if (!blsVerify) {
+            blsVerify = _utils_bls__WEBPACK_IMPORTED_MODULE_5__.blsVerify;
+        }
+        const cert = new Certificate(options.certificate, options.rootKey, options.canisterId, blsVerify);
+        await cert.verify();
+        return cert;
+    }
+    lookup(path) {
+        return lookup_path(path, this.cert.tree);
+    }
+    async verify() {
+        const rootHash = await reconstruct(this.cert.tree);
+        const derKey = await this._checkDelegationAndGetKey(this.cert.delegation);
+        const sig = this.cert.signature;
+        const key = extractDER(derKey);
+        const msg = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(domain_sep('ic-state-root'), rootHash);
+        let sigVer = false;
+        try {
+            sigVer = await this._blsVerify(new Uint8Array(key), new Uint8Array(sig), new Uint8Array(msg));
+        }
+        catch (err) {
+            sigVer = false;
+        }
+        if (!sigVer) {
+            throw new CertificateVerificationError('Signature verification failed');
+        }
+    }
+    async _checkDelegationAndGetKey(d) {
+        if (!d) {
+            return this._rootKey;
+        }
+        const cert = await Certificate.create({
+            certificate: d.certificate,
+            rootKey: this._rootKey,
+            canisterId: this._canisterId,
+        });
+        const rangeLookup = cert.lookup(['subnet', d.subnet_id, 'canister_ranges']);
+        if (!rangeLookup) {
+            throw new CertificateVerificationError(`Could not find canister ranges for subnet 0x${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.toHex)(d.subnet_id)}`);
+        }
+        const ranges_arr = _cbor__WEBPACK_IMPORTED_MODULE_0__.decode(rangeLookup);
+        const ranges = ranges_arr.map(v => [
+            _dfinity_principal__WEBPACK_IMPORTED_MODULE_4__.Principal.fromUint8Array(v[0]),
+            _dfinity_principal__WEBPACK_IMPORTED_MODULE_4__.Principal.fromUint8Array(v[1]),
+        ]);
+        const canisterInRange = ranges.some(r => r[0].ltEq(this._canisterId) && r[1].gtEq(this._canisterId));
+        if (!canisterInRange) {
+            throw new CertificateVerificationError(`Canister ${this._canisterId} not in range of delegations for subnet 0x${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.toHex)(d.subnet_id)}`);
+        }
+        const publicKeyLookup = cert.lookup(['subnet', d.subnet_id, 'public_key']);
+        if (!publicKeyLookup) {
+            throw new Error(`Could not find subnet key for subnet 0x${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.toHex)(d.subnet_id)}`);
+        }
+        return publicKeyLookup;
+    }
+}
+const DER_PREFIX = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.fromHex)('308182301d060d2b0601040182dc7c0503010201060c2b0601040182dc7c05030201036100');
+const KEY_LENGTH = 96;
+function extractDER(buf) {
+    const expectedLength = DER_PREFIX.byteLength + KEY_LENGTH;
+    if (buf.byteLength !== expectedLength) {
+        throw new TypeError(`BLS DER-encoded public key must be ${expectedLength} bytes long`);
+    }
+    const prefix = buf.slice(0, DER_PREFIX.byteLength);
+    if (!isBufferEqual(prefix, DER_PREFIX)) {
+        throw new TypeError(`BLS DER-encoded public key is invalid. Expect the following prefix: ${DER_PREFIX}, but get ${prefix}`);
+    }
+    return buf.slice(DER_PREFIX.byteLength);
+}
+/**
+ * @param t
+ */
+async function reconstruct(t) {
+    switch (t[0]) {
+        case 0 /* NodeId.Empty */:
+            return (0,_request_id__WEBPACK_IMPORTED_MODULE_2__.hash)(domain_sep('ic-hashtree-empty'));
+        case 4 /* NodeId.Pruned */:
+            return t[1];
+        case 3 /* NodeId.Leaf */:
+            return (0,_request_id__WEBPACK_IMPORTED_MODULE_2__.hash)((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(domain_sep('ic-hashtree-leaf'), t[1]));
+        case 2 /* NodeId.Labeled */:
+            return (0,_request_id__WEBPACK_IMPORTED_MODULE_2__.hash)((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(domain_sep('ic-hashtree-labeled'), t[1], await reconstruct(t[2])));
+        case 1 /* NodeId.Fork */:
+            return (0,_request_id__WEBPACK_IMPORTED_MODULE_2__.hash)((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(domain_sep('ic-hashtree-fork'), await reconstruct(t[1]), await reconstruct(t[2])));
+        default:
+            throw new Error('unreachable');
+    }
+}
+function domain_sep(s) {
+    const len = new Uint8Array([s.length]);
+    const str = new TextEncoder().encode(s);
+    return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(len, str);
+}
+/**
+ * @param path
+ * @param tree
+ */
+function lookup_path(path, tree) {
+    if (path.length === 0) {
+        switch (tree[0]) {
+            case 3 /* NodeId.Leaf */: {
+                return new Uint8Array(tree[1]).buffer;
+            }
+            default: {
+                return undefined;
+            }
+        }
+    }
+    const label = typeof path[0] === 'string' ? new TextEncoder().encode(path[0]) : path[0];
+    const t = find_label(label, flatten_forks(tree));
+    if (t) {
+        return lookup_path(path.slice(1), t);
+    }
+}
+function flatten_forks(t) {
+    switch (t[0]) {
+        case 0 /* NodeId.Empty */:
+            return [];
+        case 1 /* NodeId.Fork */:
+            return flatten_forks(t[1]).concat(flatten_forks(t[2]));
+        default:
+            return [t];
+    }
+}
+function find_label(l, trees) {
+    if (trees.length === 0) {
+        return undefined;
+    }
+    for (const t of trees) {
+        if (t[0] === 2 /* NodeId.Labeled */) {
+            const p = t[1];
+            if (isBufferEqual(l, p)) {
+                return t[2];
+            }
+        }
+    }
+}
+//# sourceMappingURL=certificate.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/errors.js":
+/*!************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/errors.js ***!
+  \************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   AgentError: () => (/* binding */ AgentError)
+/* harmony export */ });
+/**
+ * An error that happens in the Agent. This is the root of all errors and should be used
+ * everywhere in the Agent code (this package).
+ *
+ * @todo https://github.com/dfinity/agent-js/issues/420
+ */
+class AgentError extends Error {
+    constructor(message) {
+        super(message);
+        this.message = message;
+        Object.setPrototypeOf(this, AgentError.prototype);
+    }
+}
+//# sourceMappingURL=errors.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/fetch_candid.js":
+/*!******************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/fetch_candid.js ***!
+  \******************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   fetchCandid: () => (/* binding */ fetchCandid)
+/* harmony export */ });
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _canisterStatus_index__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./canisterStatus/index */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisterStatus/index.js");
+/* harmony import */ var _agent_http__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./agent/http */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/index.js");
+/* harmony import */ var _actor__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./actor */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/actor.js");
+
+
+
+
+/**
+ * Retrieves the Candid interface for the specified canister.
+ *
+ * @param agent The agent to use for the request (usually an `HttpAgent`)
+ * @param canisterId A string corresponding to the canister ID
+ * @returns Candid source code
+ */
+async function fetchCandid(canisterId, agent) {
+    if (!agent) {
+        // Create an anonymous `HttpAgent` (adapted from Candid UI)
+        agent = new _agent_http__WEBPACK_IMPORTED_MODULE_2__.HttpAgent();
+        if (agent.isLocal()) {
+            agent.fetchRootKey();
+        }
+    }
+    // Attempt to use canister metadata
+    const status = await _canisterStatus_index__WEBPACK_IMPORTED_MODULE_1__.request({
+        agent,
+        canisterId: _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.fromText(canisterId),
+        paths: ['candid'],
+    });
+    const candid = status.get('candid');
+    if (candid) {
+        return candid;
+    }
+    // Use `__get_candid_interface_tmp_hack` for canisters without Candid metadata
+    const tmpHackInterface = ({ IDL }) => IDL.Service({
+        __get_candid_interface_tmp_hack: IDL.Func([], [IDL.Text], ['query']),
+    });
+    const actor = _actor__WEBPACK_IMPORTED_MODULE_3__.Actor.createActor(tmpHackInterface, { agent, canisterId });
+    return (await actor.__get_candid_interface_tmp_hack());
+}
+//# sourceMappingURL=fetch_candid.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/index.js":
+/*!***********************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/index.js ***!
+  \***********************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Actor: () => (/* reexport safe */ _actor__WEBPACK_IMPORTED_MODULE_0__.Actor),
+/* harmony export */   ActorCallError: () => (/* reexport safe */ _actor__WEBPACK_IMPORTED_MODULE_0__.ActorCallError),
+/* harmony export */   AnonymousIdentity: () => (/* reexport safe */ _auth__WEBPACK_IMPORTED_MODULE_2__.AnonymousIdentity),
+/* harmony export */   CanisterInstallMode: () => (/* reexport safe */ _actor__WEBPACK_IMPORTED_MODULE_0__.CanisterInstallMode),
+/* harmony export */   CanisterStatus: () => (/* reexport module object */ _canisterStatus__WEBPACK_IMPORTED_MODULE_12__),
+/* harmony export */   Cbor: () => (/* reexport module object */ _cbor__WEBPACK_IMPORTED_MODULE_13__),
+/* harmony export */   Certificate: () => (/* reexport safe */ _certificate__WEBPACK_IMPORTED_MODULE_3__.Certificate),
+/* harmony export */   CertificateVerificationError: () => (/* reexport safe */ _certificate__WEBPACK_IMPORTED_MODULE_3__.CertificateVerificationError),
+/* harmony export */   Expiry: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.Expiry),
+/* harmony export */   HttpAgent: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.HttpAgent),
+/* harmony export */   IdentityInvalidError: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.IdentityInvalidError),
+/* harmony export */   ProxyAgent: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.ProxyAgent),
+/* harmony export */   ProxyMessageKind: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.ProxyMessageKind),
+/* harmony export */   ProxyStubAgent: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.ProxyStubAgent),
+/* harmony export */   QueryCallRejectedError: () => (/* reexport safe */ _actor__WEBPACK_IMPORTED_MODULE_0__.QueryCallRejectedError),
+/* harmony export */   ReplicaRejectCode: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.ReplicaRejectCode),
+/* harmony export */   RequestStatusResponseStatus: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.RequestStatusResponseStatus),
+/* harmony export */   SignIdentity: () => (/* reexport safe */ _auth__WEBPACK_IMPORTED_MODULE_2__.SignIdentity),
+/* harmony export */   SubmitRequestType: () => (/* reexport safe */ _agent_http_types__WEBPACK_IMPORTED_MODULE_5__.SubmitRequestType),
+/* harmony export */   UpdateCallRejectedError: () => (/* reexport safe */ _actor__WEBPACK_IMPORTED_MODULE_0__.UpdateCallRejectedError),
+/* harmony export */   blsVerify: () => (/* reexport safe */ _utils_bls__WEBPACK_IMPORTED_MODULE_9__.blsVerify),
+/* harmony export */   compare: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_10__.compare),
+/* harmony export */   concat: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_10__.concat),
+/* harmony export */   createAssetCanisterActor: () => (/* reexport safe */ _canisters_asset__WEBPACK_IMPORTED_MODULE_6__.createAssetCanisterActor),
+/* harmony export */   createIdentityDescriptor: () => (/* reexport safe */ _auth__WEBPACK_IMPORTED_MODULE_2__.createIdentityDescriptor),
+/* harmony export */   fetchCandid: () => (/* reexport safe */ _fetch_candid__WEBPACK_IMPORTED_MODULE_7__.fetchCandid),
+/* harmony export */   fromHex: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_10__.fromHex),
+/* harmony export */   getDefaultAgent: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.getDefaultAgent),
+/* harmony export */   getManagementCanister: () => (/* reexport safe */ _actor__WEBPACK_IMPORTED_MODULE_0__.getManagementCanister),
+/* harmony export */   hash: () => (/* reexport safe */ _request_id__WEBPACK_IMPORTED_MODULE_8__.hash),
+/* harmony export */   hashTreeToString: () => (/* reexport safe */ _certificate__WEBPACK_IMPORTED_MODULE_3__.hashTreeToString),
+/* harmony export */   hashValue: () => (/* reexport safe */ _request_id__WEBPACK_IMPORTED_MODULE_8__.hashValue),
+/* harmony export */   lookup_path: () => (/* reexport safe */ _certificate__WEBPACK_IMPORTED_MODULE_3__.lookup_path),
+/* harmony export */   makeExpiryTransform: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.makeExpiryTransform),
+/* harmony export */   makeNonce: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.makeNonce),
+/* harmony export */   makeNonceTransform: () => (/* reexport safe */ _agent__WEBPACK_IMPORTED_MODULE_1__.makeNonceTransform),
+/* harmony export */   polling: () => (/* reexport module object */ _polling__WEBPACK_IMPORTED_MODULE_11__),
+/* harmony export */   reconstruct: () => (/* reexport safe */ _certificate__WEBPACK_IMPORTED_MODULE_3__.reconstruct),
+/* harmony export */   requestIdOf: () => (/* reexport safe */ _request_id__WEBPACK_IMPORTED_MODULE_8__.requestIdOf),
+/* harmony export */   toHex: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_10__.toHex),
+/* harmony export */   verify: () => (/* reexport safe */ _utils_bls__WEBPACK_IMPORTED_MODULE_9__.verify)
+/* harmony export */ });
+/* harmony import */ var _actor__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./actor */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/actor.js");
+/* harmony import */ var _agent__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./agent */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/index.js");
+/* harmony import */ var _auth__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./auth */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/auth.js");
+/* harmony import */ var _certificate__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./certificate */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/certificate.js");
+/* harmony import */ var _agent_http_transforms__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./agent/http/transforms */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/transforms.js");
+/* harmony import */ var _agent_http_types__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./agent/http/types */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/http/types.js");
+/* harmony import */ var _canisters_asset__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./canisters/asset */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisters/asset.js");
+/* harmony import */ var _fetch_candid__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ./fetch_candid */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/fetch_candid.js");
+/* harmony import */ var _request_id__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ./request_id */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/request_id.js");
+/* harmony import */ var _utils_bls__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! ./utils/bls */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/bls.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+/* harmony import */ var _polling__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(/*! ./polling */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/polling/index.js");
+/* harmony import */ var _canisterStatus__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! ./canisterStatus */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/canisterStatus/index.js");
+/* harmony import */ var _cbor__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(/*! ./cbor */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/cbor.js");
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * The CanisterStatus utility is used to request structured data directly from the IC public API. This data can be accessed using agent.readState, but CanisterStatus provides a helpful abstraction with some known paths.
+ *
+ * You can request a canisters Controllers, ModuleHash, Candid interface, Subnet, or Time, or provide a custom path {@link CanisterStatus.CustomPath} and pass arbitrary buffers for valid paths identified in https://internetcomputer.org/docs/current/references/ic-interface-spec.
+ *
+ * The primary method for this namespace is {@link CanisterStatus.request}
+ */
+
+
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/polling/index.js":
+/*!*******************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/polling/index.js ***!
+  \*******************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   defaultStrategy: () => (/* reexport safe */ _strategy__WEBPACK_IMPORTED_MODULE_3__.defaultStrategy),
+/* harmony export */   pollForResponse: () => (/* binding */ pollForResponse),
+/* harmony export */   strategy: () => (/* reexport module object */ _strategy__WEBPACK_IMPORTED_MODULE_3__)
+/* harmony export */ });
+/* harmony import */ var _agent__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../agent */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/agent/index.js");
+/* harmony import */ var _certificate__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../certificate */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/certificate.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ../utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+/* harmony import */ var _strategy__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./strategy */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/polling/strategy.js");
+
+
+
+
+
+/**
+ * Polls the IC to check the status of the given request then
+ * returns the response bytes once the request has been processed.
+ * @param agent The agent to use to poll read_state.
+ * @param canisterId The effective canister ID.
+ * @param requestId The Request ID to poll status for.
+ * @param strategy A polling strategy.
+ * @param request Request for the readState call.
+ */
+async function pollForResponse(agent, canisterId, requestId, strategy, 
+// eslint-disable-next-line
+request, blsVerify) {
+    var _a;
+    const path = [new TextEncoder().encode('request_status'), requestId];
+    const currentRequest = request !== null && request !== void 0 ? request : (await ((_a = agent.createReadStateRequest) === null || _a === void 0 ? void 0 : _a.call(agent, { paths: [path] })));
+    const state = await agent.readState(canisterId, { paths: [path] }, undefined, currentRequest);
+    if (agent.rootKey == null)
+        throw new Error('Agent root key not initialized before polling');
+    const cert = await _certificate__WEBPACK_IMPORTED_MODULE_1__.Certificate.create({
+        certificate: state.certificate,
+        rootKey: agent.rootKey,
+        canisterId: canisterId,
+        blsVerify,
+    });
+    const maybeBuf = cert.lookup([...path, new TextEncoder().encode('status')]);
+    let status;
+    if (typeof maybeBuf === 'undefined') {
+        // Missing requestId means we need to wait
+        status = _agent__WEBPACK_IMPORTED_MODULE_0__.RequestStatusResponseStatus.Unknown;
+    }
+    else {
+        status = new TextDecoder().decode(maybeBuf);
+    }
+    switch (status) {
+        case _agent__WEBPACK_IMPORTED_MODULE_0__.RequestStatusResponseStatus.Replied: {
+            return cert.lookup([...path, 'reply']);
+        }
+        case _agent__WEBPACK_IMPORTED_MODULE_0__.RequestStatusResponseStatus.Received:
+        case _agent__WEBPACK_IMPORTED_MODULE_0__.RequestStatusResponseStatus.Unknown:
+        case _agent__WEBPACK_IMPORTED_MODULE_0__.RequestStatusResponseStatus.Processing:
+            // Execute the polling strategy, then retry.
+            await strategy(canisterId, requestId, status);
+            return pollForResponse(agent, canisterId, requestId, strategy, currentRequest);
+        case _agent__WEBPACK_IMPORTED_MODULE_0__.RequestStatusResponseStatus.Rejected: {
+            const rejectCode = new Uint8Array(cert.lookup([...path, 'reject_code']))[0];
+            const rejectMessage = new TextDecoder().decode(cert.lookup([...path, 'reject_message']));
+            throw new Error(`Call was rejected:\n` +
+                `  Request ID: ${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_2__.toHex)(requestId)}\n` +
+                `  Reject code: ${rejectCode}\n` +
+                `  Reject text: ${rejectMessage}\n`);
+        }
+        case _agent__WEBPACK_IMPORTED_MODULE_0__.RequestStatusResponseStatus.Done:
+            // This is _technically_ not an error, but we still didn't see the `Replied` status so
+            // we don't know the result and cannot decode it.
+            throw new Error(`Call was marked as done but we never saw the reply:\n` +
+                `  Request ID: ${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_2__.toHex)(requestId)}\n`);
+    }
+    throw new Error('unreachable');
+}
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/polling/strategy.js":
+/*!**********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/polling/strategy.js ***!
+  \**********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   backoff: () => (/* binding */ backoff),
+/* harmony export */   chain: () => (/* binding */ chain),
+/* harmony export */   conditionalDelay: () => (/* binding */ conditionalDelay),
+/* harmony export */   defaultStrategy: () => (/* binding */ defaultStrategy),
+/* harmony export */   maxAttempts: () => (/* binding */ maxAttempts),
+/* harmony export */   once: () => (/* binding */ once),
+/* harmony export */   throttle: () => (/* binding */ throttle),
+/* harmony export */   timeout: () => (/* binding */ timeout)
+/* harmony export */ });
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+
+const FIVE_MINUTES_IN_MSEC = 5 * 60 * 1000;
+/**
+ * A best practices polling strategy: wait 2 seconds before the first poll, then 1 second
+ * with an exponential backoff factor of 1.2. Timeout after 5 minutes.
+ */
+function defaultStrategy() {
+    return chain(conditionalDelay(once(), 1000), backoff(1000, 1.2), timeout(FIVE_MINUTES_IN_MSEC));
+}
+/**
+ * Predicate that returns true once.
+ */
+function once() {
+    let first = true;
+    return async () => {
+        if (first) {
+            first = false;
+            return true;
+        }
+        return false;
+    };
+}
+/**
+ * Delay the polling once.
+ * @param condition A predicate that indicates when to delay.
+ * @param timeInMsec The amount of time to delay.
+ */
+function conditionalDelay(condition, timeInMsec) {
+    return async (canisterId, requestId, status) => {
+        if (await condition(canisterId, requestId, status)) {
+            return new Promise(resolve => setTimeout(resolve, timeInMsec));
+        }
+    };
+}
+/**
+ * Error out after a maximum number of polling has been done.
+ * @param count The maximum attempts to poll.
+ */
+function maxAttempts(count) {
+    let attempts = count;
+    return async (canisterId, requestId, status) => {
+        if (--attempts <= 0) {
+            throw new Error(`Failed to retrieve a reply for request after ${count} attempts:\n` +
+                `  Request ID: ${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_0__.toHex)(requestId)}\n` +
+                `  Request status: ${status}\n`);
+        }
+    };
+}
+/**
+ * Throttle polling.
+ * @param throttleInMsec Amount in millisecond to wait between each polling.
+ */
+function throttle(throttleInMsec) {
+    return () => new Promise(resolve => setTimeout(resolve, throttleInMsec));
+}
+/**
+ * Reject a call after a certain amount of time.
+ * @param timeInMsec Time in milliseconds before the polling should be rejected.
+ */
+function timeout(timeInMsec) {
+    const end = Date.now() + timeInMsec;
+    return async (canisterId, requestId, status) => {
+        if (Date.now() > end) {
+            throw new Error(`Request timed out after ${timeInMsec} msec:\n` +
+                `  Request ID: ${(0,_utils_buffer__WEBPACK_IMPORTED_MODULE_0__.toHex)(requestId)}\n` +
+                `  Request status: ${status}\n`);
+        }
+    };
+}
+/**
+ * A strategy that throttle, but using an exponential backoff strategy.
+ * @param startingThrottleInMsec The throttle in milliseconds to start with.
+ * @param backoffFactor The factor to multiple the throttle time between every poll. For
+ *   example if using 2, the throttle will double between every run.
+ */
+function backoff(startingThrottleInMsec, backoffFactor) {
+    let currentThrottling = startingThrottleInMsec;
+    return () => new Promise(resolve => setTimeout(() => {
+        currentThrottling *= backoffFactor;
+        resolve();
+    }, currentThrottling));
+}
+/**
+ * Chain multiple polling strategy. This _chains_ the strategies, so if you pass in,
+ * say, two throttling strategy of 1 second, it will result in a throttle of 2 seconds.
+ * @param strategies A strategy list to chain.
+ */
+function chain(...strategies) {
+    return async (canisterId, requestId, status) => {
+        for (const a of strategies) {
+            await a(canisterId, requestId, status);
+        }
+    };
+}
+//# sourceMappingURL=strategy.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/request_id.js":
+/*!****************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/request_id.js ***!
+  \****************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   hash: () => (/* binding */ hash),
+/* harmony export */   hashValue: () => (/* binding */ hashValue),
+/* harmony export */   requestIdOf: () => (/* binding */ requestIdOf)
+/* harmony export */ });
+/* harmony import */ var _dfinity_candid__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/candid */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/index.js");
+/* harmony import */ var borc__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! borc */ "./node_modules/borc/src/index.js");
+/* harmony import */ var js_sha256__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! js-sha256 */ "./node_modules/js-sha256/src/sha256.js");
+/* harmony import */ var js_sha256__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__webpack_require__.n(js_sha256__WEBPACK_IMPORTED_MODULE_2__);
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js");
+
+
+
+
+/**
+ * sha256 hash the provided Buffer
+ * @param data - input to hash function
+ */
+function hash(data) {
+    return js_sha256__WEBPACK_IMPORTED_MODULE_2__.sha256.create().update(new Uint8Array(data)).arrayBuffer();
+}
+/**
+ *
+ * @param value unknown value
+ * @returns ArrayBuffer
+ */
+function hashValue(value) {
+    if (value instanceof borc__WEBPACK_IMPORTED_MODULE_1__.Tagged) {
+        return hashValue(value.value);
+    }
+    else if (typeof value === 'string') {
+        return hashString(value);
+    }
+    else if (typeof value === 'number') {
+        return hash((0,_dfinity_candid__WEBPACK_IMPORTED_MODULE_0__.lebEncode)(value));
+    }
+    else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+        return hash(value);
+    }
+    else if (Array.isArray(value)) {
+        const vals = value.map(hashValue);
+        return hash((0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(...vals));
+    }
+    else if (value && typeof value === 'object' && value._isPrincipal) {
+        return hash(value.toUint8Array());
+    }
+    else if (typeof value === 'object' &&
+        value !== null &&
+        typeof value.toHash === 'function') {
+        return hashValue(value.toHash());
+        // TODO This should be move to a specific async method as the webauthn flow required
+        // the flow to be synchronous to ensure Safari touch id works.
+        // } else if (value instanceof Promise) {
+        //   return value.then(x => hashValue(x));
+    }
+    else if (typeof value === 'bigint') {
+        // Do this check much later than the other bigint check because this one is much less
+        // type-safe.
+        // So we want to try all the high-assurance type guards before this 'probable' one.
+        return hash((0,_dfinity_candid__WEBPACK_IMPORTED_MODULE_0__.lebEncode)(value));
+    }
+    throw Object.assign(new Error(`Attempt to hash a value of unsupported type: ${value}`), {
+        // include so logs/callers can understand the confusing value.
+        // (when stringified in error message, prototype info is lost)
+        value,
+    });
+}
+const hashString = (value) => {
+    const encoded = new TextEncoder().encode(value);
+    return hash(encoded);
+};
+/**
+ * Get the RequestId of the provided ic-ref request.
+ * RequestId is the result of the representation-independent-hash function.
+ * https://sdk.dfinity.org/docs/interface-spec/index.html#hash-of-map
+ * @param request - ic-ref request to hash into RequestId
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function requestIdOf(request) {
+    const hashed = Object.entries(request)
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => {
+        const hashedKey = hashString(key);
+        const hashedValue = hashValue(value);
+        return [hashedKey, hashedValue];
+    });
+    const traversed = hashed;
+    const sorted = traversed.sort(([k1], [k2]) => {
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.compare)(k1, k2);
+    });
+    const concatenated = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(...sorted.map(x => (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_3__.concat)(...x)));
+    const requestId = hash(concatenated);
+    return requestId;
+}
+//# sourceMappingURL=request_id.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/bls.js":
+/*!***************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/bls.js ***!
+  \***************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   blsVerify: () => (/* binding */ blsVerify),
+/* harmony export */   verify: () => (/* binding */ verify)
+/* harmony export */ });
+/* harmony import */ var _vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../vendor/bls/bls */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/vendor/bls/bls.js");
+
+let verify;
+/**
+ *
+ * @param pk primary key: Uint8Array
+ * @param sig signature: Uint8Array
+ * @param msg message: Uint8Array
+ * @returns Promise resolving a boolean
+ */
+async function blsVerify(pk, sig, msg) {
+    if (!verify) {
+        await (0,_vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__["default"])();
+        if ((0,_vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__.bls_init)() !== 0) {
+            throw new Error('Cannot initialize BLS');
+        }
+        verify = (pk1, sig1, msg1) => {
+            // Reorder things from what the WASM expects (sig, m, w).
+            return (0,_vendor_bls_bls__WEBPACK_IMPORTED_MODULE_0__.bls_verify)(sig1, msg1, pk1) === 0;
+        };
+    }
+    return verify(pk, sig, msg);
+}
+//# sourceMappingURL=bls.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js":
+/*!******************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/utils/buffer.js ***!
+  \******************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   compare: () => (/* binding */ compare),
+/* harmony export */   concat: () => (/* binding */ concat),
+/* harmony export */   fromHex: () => (/* binding */ fromHex),
+/* harmony export */   toHex: () => (/* binding */ toHex)
+/* harmony export */ });
+/**
+ * Concatenate multiple array buffers.
+ * @param buffers The buffers to concatenate.
+ */
+function concat(...buffers) {
+    const result = new Uint8Array(buffers.reduce((acc, curr) => acc + curr.byteLength, 0));
+    let index = 0;
+    for (const b of buffers) {
+        result.set(new Uint8Array(b), index);
+        index += b.byteLength;
+    }
+    return result.buffer;
+}
+/**
+ * Transforms a buffer to an hexadecimal string. This will use the buffer as an Uint8Array.
+ * @param buffer The buffer to return the hexadecimal string of.
+ */
+function toHex(buffer) {
+    return [...new Uint8Array(buffer)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+const hexRe = new RegExp(/^([0-9A-F]{2})*$/i);
+/**
+ * Transforms a hexadecimal string into an array buffer.
+ * @param hex The hexadecimal string to use.
+ */
+function fromHex(hex) {
+    if (!hexRe.test(hex)) {
+        throw new Error('Invalid hexadecimal string.');
+    }
+    const buffer = [...hex]
+        .reduce((acc, curr, i) => {
+        // tslint:disable-next-line:no-bitwise
+        acc[(i / 2) | 0] = (acc[(i / 2) | 0] || '') + curr;
+        return acc;
+    }, [])
+        .map(x => Number.parseInt(x, 16));
+    return new Uint8Array(buffer).buffer;
+}
+function compare(b1, b2) {
+    if (b1.byteLength !== b2.byteLength) {
+        return b1.byteLength - b2.byteLength;
+    }
+    const u1 = new Uint8Array(b1);
+    const u2 = new Uint8Array(b2);
+    for (let i = 0; i < u1.length; i++) {
+        if (u1[i] !== u2[i]) {
+            return u1[i] - u2[i];
+        }
+    }
+    return 0;
+}
+//# sourceMappingURL=buffer.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/vendor/bls/bls.js":
+/*!********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/vendor/bls/bls.js ***!
+  \********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   bls_init: () => (/* binding */ bls_init),
+/* harmony export */   bls_verify: () => (/* binding */ bls_verify),
+/* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
+/* harmony export */ });
+/* harmony import */ var base64_arraybuffer__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! base64-arraybuffer */ "./node_modules/base64-arraybuffer/lib/base64-arraybuffer.js");
+/* harmony import */ var _wasm__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./wasm */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/vendor/bls/wasm.js");
+
+// This WASM is generated from the miracl BLS Rust code (see
+// https://github.com/dfinity/miracl_core_bls12381/)
+
+/* tslint:disable */
+/* eslint-disable */
+let wasm;
+const wasmBytes = base64_arraybuffer__WEBPACK_IMPORTED_MODULE_0__.decode(_wasm__WEBPACK_IMPORTED_MODULE_1__.wasmBytesBase64);
+/**
+ * @returns {number}
+ */
+function bls_init() {
+    let ret = wasm.bls_init();
+    return ret;
+}
+let cachegetUint8Memory0 = null;
+function getUint8Memory0() {
+    if (cachegetUint8Memory0 === null || cachegetUint8Memory0.buffer !== wasm.memory.buffer) {
+        cachegetUint8Memory0 = new Uint8Array(wasm.memory.buffer);
+    }
+    return cachegetUint8Memory0;
+}
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1);
+    getUint8Memory0().set(arg, ptr / 1);
+    return [ptr, arg.length];
+}
+/**
+ * @param {Uint8Array} sig
+ * @param {Uint8Array} m
+ * @param {Uint8Array} w
+ * @returns {number}
+ */
+function bls_verify(sig, m, w) {
+    const [ptr0, len0] = passArray8ToWasm0(sig, wasm.__wbindgen_malloc);
+    const [ptr1, len1] = passArray8ToWasm0(m, wasm.__wbindgen_malloc);
+    const [ptr2, len2] = passArray8ToWasm0(w, wasm.__wbindgen_malloc);
+    const ret = wasm.bls_verify(ptr0, len0, ptr1, len1, ptr2, len2);
+    return ret;
+}
+async function load(module, imports) {
+    if (typeof Response === 'function' && module instanceof Response) {
+        const bytes = await module.arrayBuffer();
+        return await WebAssembly.instantiate(bytes, imports);
+    }
+    else {
+        const instance = await WebAssembly.instantiate(module, imports);
+        if (instance instanceof WebAssembly.Instance) {
+            return { instance, module };
+        }
+        else {
+            return instance;
+        }
+    }
+}
+async function init() {
+    const imports = {};
+    const { instance, module } = await load(wasmBytes, imports);
+    wasm = instance.exports;
+    init.__wbindgen_wasm_module = module;
+    return wasm;
+}
+/**
+ * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+ * for everything else, calls `WebAssembly.instantiate` directly.
+ *
+ * @param {InitInput | Promise<InitInput>} module_or_path
+ *
+ * @returns {Promise<InitOutput>}
+ */
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (init);
+//# sourceMappingURL=bls.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/vendor/bls/wasm.js":
+/*!*********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/vendor/bls/wasm.js ***!
+  \*********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   wasmBytesBase64: () => (/* binding */ wasmBytesBase64)
+/* harmony export */ });
+const wasmBytesBase64 = `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akE4ENABGiACQbgDakEBNgIAIAJBwANqQTgQ0AEaIAJB+ANqQQE2AgAgAkGABGpBOBDQARogAkEBNgK4BCACQcAEakE4ENABGiACQfgEakEBNgIAIAJBgAVqQTgQ0AEaIAJBuAVqQQE2AgAgAkHABWpBOBDQARogAkH4BWpBATYCACACQYAGakE4ENABGiACQQE2ArgGIAJBwAZqQTgQ0AEaIAJB+AZqQQE2AgAgAkGAB2pBOBDQARogAkG4B2pBATYCACACQcAHakE4ENABGiACQfgHakEBNgIAIAIgARAYAkAgASgCgAZBBEYNACAAKAKABkEERg0AIAJBgARqIgMgAEGAAmoQlgEgAyABQYACahAYDAYLIAJBwAxqIgdBOBDQARogAkEBNgL4DCACQYANakE4ENABGiACQbgNakEBNgIAIAJBgAhqIgRBOBDQARogAkEBNgK4CCACQcAIakE4ENABGiACQfgIakEBNgIAIAJBgApqIgMgAEGAA2oiBRBeIAQgAxCZASADIAFBgANqIgYQXiAEIAMQESAHELYBIAEoAoAGQQRHDQMMBAsgACABEAMMBgsgAkHADGoiAyABQYAFahBeIAJBgAxqIgQgA0HAABDRARogAkGABmogBBCnAQsgAkGABmoQZCACQYAIaiIDIAIQlgEgAxArIAJBgAJqIgQgAxCXASAGIAQQlgEgAkGABGoiByADEJYBIAMgABCWASADIAUQlwEgAxCwASACQYAKaiIEIAEQlgEgBCABQYAEahCXASAEELABIAMgBBAYIAcgAxCXASADIAUQlgECQCABKAKABkECRwRAIAJBwAxqIgMgAUGABWoQXiACQYAIaiADEKYBDAELIAJBwAxqIgMgAUGABWoQXiACQYAMaiIBIANBwAAQ0QEaIAJBgAhqIAEQpwELIAJBgAhqIgEQZCACQYAKaiIDIAEQlgEgAxArIAUgAkGABGoQlgEgBSADEJcBIAJBgAZqIgQgAxCXASABEGQgBiABEJcBIAQQsAEgBBBkIAAgAhCWASAAIAQQlwEMAwsgAkGACmoiAyAFEF4gAkHADGoiBCADEJkBIAMgAUGAAmoQXiAEIAMQEQsgACgCgAZBBEcEQCACQYAKaiIDIABBgAJqEF4gAkHADGoiBCADEJkBIAMgBhBeIAQgAxARCyACQYAEaiIDIAJB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AEHcu8AAKAIAQX4gA0EDdndxNgIACyAAIAEQoAEgAEH0vsAAKAIARw0BQey+wAAgATYCAAsPCyABQYACTwRAIAAgARAWDwsgAUEDdiICQQN0QeS7wABqIQECf0Hcu8AAKAIAIgNBASACdCICcQRAIAEoAggMAQtB3LvAACACIANyNgIAIAELIQIgASAANgIIIAIgADYCDCAAIAE2AgwgACACNgIIC+UDAQN/IwBB0CJrIgMkACADQcAWaiIEQcitwAAQSSADQcgcaiIFQYCuwAAQSSADQQhqIAQgBRBLIANBiAFqQTgQ0AEaIANBwAFqQTgQ0AEaIANB+AFqED0CQCACEIYBBEAgABBVDAELIANB+ARqIgQQPSAEIAEQfSAEEEcgA0H4B2oiARBnIAEgAhB4IAEQRiADQcgcaiICIAEQkAEgA0G4CWogAhCQASACIANBuAhqEJABIANB+AlqIAIQkAEgA0G4CmoiARA9IANBuA1qEFUgASAEEH0gA0HAE2oiARA9IAEgBBB9IAEQogEgA0HAAWogA0GIAWoQUEECayECA0AgAkEBakEBTQRAIANBuA1qIgEQngEgACABQYgGENEBGgUgA0G4DWoQGiADQcAWaiADQbgKaiADQbgJaiADQfgJahALAkACQAJAIANBwAFqIAIQUyADQYgBaiACEFNrQQFqDgMBAgACCyADQcgcaiIBIANBuApqIANB+ARqIANBuAlqIANB+AlqEAogA0HAFmogARADDAELIANByBxqIgEgA0G4CmogA0HAE2ogA0G4CWogA0H4CWoQCiADQcAWaiABEAMLIAJBAWshAiADQbgNaiADQcAWahABDAELCwsgA0HQImokAAvBAwEVfwNAIANBwAFGBEACQCAAQShqIQsgAEEUaigCACIMIQggAEEQaigCACINIQIgAEEMaigCACIOIQEgACgCCCIPIQMgAEEYaigCACIQIQogAEEcaigCACIRIQQgAEEgaigCACISIQcgAEEkaigCACITIQYDQCAHIQkgBCEHIAohBCAFQYACRg0BIAEgAnEhFCABIAJzIRUgBSALaigCACAFQcCiwABqKAIAIAkgBEF/c3EgBCAHcXIgBmogBEEadyAEQRV3cyAEQQd3c2pqaiIGIAhqIQogBUEEaiEFIAIhCCABIQIgAyIBQR53IAFBE3dzIAFBCndzIBQgASAVcXNqIAZqIQMgCSEGDAALAAsFIAAgA2oiAkHoAGogAkEoaigCACACQcwAaigCACACQeAAaigCACIBQQ93IAFBDXdzIAFBCnZzamogAkEsaigCACIBQRl3IAFBDndzIAFBA3ZzajYCACADQQRqIQMMAQsLIAAgBiATajYCJCAAIAkgEmo2AiAgACAHIBFqNgIcIAAgBCAQajYCGCAAIAggDGo2AhQgACACIA1qNgIQIAAgASAOajYCDCAAIAMgD2o2AggL5AEBAn8jAEGAA2siAyQAIAMQPSAAIAEgAkEfdSIEIAJzIARBf3NqQQJtIgJBAWtBH3YQbyAAIAFBgANqIAJBAXNBAWtBH3YQbyAAIAFBgAZqIAJBAnNBAWtBH3YQbyAAIAFBgAlqIAJBA3NBAWtBH3YQbyAAIAFBgAxqIAJBBHNBAWtBH3YQbyAAIAFBgA9qIAJBBXNBAWtBH3YQbyAAIAFBgBJqIAJBBnNBAWtBH3YQbyAAIAFBgBVqIAJBB3NBAWtBH3YQbyADIAAQfSADEKIBIAAgAyAEQQFxEG8gA0GAA2okAAvlAwEIfyMAQZAGayICJAAgAEFAayEIAkAgAUH4AGooAgAgASgCOGqsIABB+ABqKAIAIgcgACgCOCIEaqx+Qv///w9XDQAgBEEBSgR/IAAQHiAAKAJ4BSAHC0EBTA0AIAgQHgsgAkHYpMAAEEkgAkE4aiIHQfAAENABGiACIQNBACECA0AgAkE4RgRAAkAgB0E4aiEEQQAhAgNAIAJBOEYNASACIARqIAIgA2opAwA3AwAgAkEIaiECDAALAAsFIAIgB2pCADcDACACQQhqIQIMAQsLIANBqAFqIgYgABBdIANB4AFqIgUgARBdIANBmAJqIgIgACABEAUgA0GIA2oiBCAIIAFBQGsiARAFIAYgCBBgIAYQQiAFIAEQYCAFEEIgA0H4A2oiCSAGIAUQBUEAIQEgA0HoBGoiBkHwABDQASEFA0AgAUHwAEcEQCABIAVqIAEgAmopAwA3AwAgAUEIaiEBDAELCyAGIAQQYkEAIQEDQCABQfAARwRAIAEgBGoiBSABIAdqKQMAIAUpAwB9NwMAIAFBCGohAQwBCwsgAiAEEGIgAhBIIAkgBhBjIAkQSCADQdgFaiIBIAIQayAAIAEQaiAAQQM2AjggASAJEGsgCCABEGogAEECNgJ4IANBkAZqJAALowIBCH8jAEGABmsiAiQAIAIgAEGAAWoiBxBeIAJBgAFqIgQgBxBeIAQQLSACQYACaiIFIAIQXiAFIABBgAJqIgMQESACQYADaiIBIAMQXiABEC0gAyAEEJkBIAMgBBCaASADEKkBIAMQuAEgAxC4ASADEKkBIAFBDBCrASABEHwgARCpASACQYAEaiIIIAEQXiAIIAMQESACQYAFaiIGIAQQXiAGIAEQmgEgBhCpASADIAUQESAFIAEQmQEgBSABEJoBIAEgBRCaASABEKkBIAQgARB7IAQQqQEgBiAEEBEgBiAIEJoBIAUgABCZASAFIAIQESAAIAQQmQEgABCpASAAIAUQESAAELgBIAAQqQEgByAGEJkBIAcQqQEgAkGABmokAAu8AgEGfyMAQYAIayIBJAAgASAAEIwBIAFBgAJqIgMgAEGABGoiBRCMASABQYAEaiIEIABBgAJqIgYQjAEgAUGABmoiAkE4ENABGiABQQE2ArgGIAFBwAZqQTgQ0AEaIAFB+AZqQQE2AgAgAUGAB2pBOBDQARogAUG4B2pBATYCACABQcAHakE4ENABGiABQfgHakEBNgIAIAAQISACIAAQlgEgAiAAEJcBIAAgAhCXASAAELABIAEQyQEgARCzASAAIAEQlwEgAxAhIAMQZCACIAMQlgEgAiADEJcBIAMgAhCXASADELABIAQQISACIAQQlgEgAiAEEJcBIAQgAhCXASAEELABIAYQsgEgBhCzASAFEMkBIAUQswEgBiADEJcBIAUgBBCXASAAQQU2AoAGIAAQnAEgAUGACGokAAv/AQEHfyMAQcACayIBJAAgASAAQUBrIgYQkAEgARBMIAFBQGsiAyAGEJABIAMgAEGAAWoiAhBKIAFBgAFqIgQgAhCQASAEEEwgAiABEK4BIAIgARB3IAIQQiACEIIBIAIQggEgAhBCIARBDBA0IAFBwAFqIgcgBBCQASAHIAIQSiABQYACaiIFIAEQkAEgBSAEEHcgBRBCIAIgAxBKIAMgBBCuASADIAQQdyAEIAMQdyABIAQQfiABEEIgBSABEEogBSAHEHcgAyAAEK4BIAMgBhBKIAAgARCuASAAEEIgACADEEogABCCASAAEEIgBiAFEK4BIAYQQiABQcACaiQAC84CAgd/An4CQAJAAkBBDSABQTpuIgJrIgRBDU0EQEEMIAJrIgNBDk8NASAAIAAgA0EDdGopAwBBOiABIAJBOmxrIgNrrSIKhyAAIARBA3RqKQMAIAOtIgmGhDcDaCAEQQ1rIQUgAEHgAGohBCACQQFqIQZBACACQQN0ayEHQQshAwNAAkAgA0ECaiAGTQRAIAFBrAZPDQEgACACQQN0aiAAKQMAIAmGQv//////////A4M3AwADQCACRQ0HIABCADcDACACQQFrIQIgAEEIaiEADAALAAsgAyAFakEOTw0EIAQgBCAHaiIIQQhrKQMAIAqHIAgpAwAgCYZC//////////8Dg4Q3AwAgA0EBayEDIARBCGshBAwBCwsgAkEOQYCywAAQOwALIARBDkHQscAAEDsACyADQQ5B4LHAABA7AAtBf0EOQfCxwAAQOwALC6cCAQR/IABCADcCECAAAn9BACABQYACSQ0AGkEfIAFB////B0sNABogAUEGIAFBCHZnIgNrdkEBcSADQQF0a0E+agsiBDYCHCAEQQJ0Qey9wABqIQMgACECAkACQAJAAkBB4LvAACgCACIAQQEgBHQiBXEEQCADKAIAIQMgBBCfASEAIAMQywEgAUcNASADIQAMAgtB4LvAACAAIAVyNgIAIAMgAjYCAAwDCyABIAB0IQQDQCADIARBHXZBBHFqQRBqIgUoAgAiAEUNAiAEQQF0IQQgACIDEMsBIAFHDQALCyAAKAIIIgEgAjYCDCAAIAI2AgggAiAANgIMIAIgATYCCCACQQA2AhgPCyAFIAI2AgALIAIgAzYCGCACIAI2AgggAiACNgIMC7YCAQV/IAAoAhghBAJAAkAgACAAKAIMRgRAIABBFEEQIABBFGoiASgCACIDG2ooAgAiAg0BQQAhAQwCCyAAKAIIIgIgACgCDCIBNgIMIAEgAjYCCAwBCyABIABBEGogAxshAwNAIAMhBSACIgFBFGoiAygCACICRQRAIAFBEGohAyABKAIQIQILIAINAAsgBUEANgIACwJAIARFDQACQCAAIAAoAhxBAnRB7L3AAGoiAigCAEcEQCAEQRBBFCAEKAIQIABGG2ogATYCACABDQEMAgsgAiABNgIAIAENAEHgu8AAQeC7wAAoAgBBfiAAKAIcd3E2AgAPCyABIAQ2AhggACgCECICBEAgASACNgIQIAIgATYCGAsgAEEUaigCACIARQ0AIAFBFGogADYCACAAIAE2AhgLC+UBAQZ/IwBBgARrIgIkACACIAAQXiACQYABaiIFIABBgAFqIgYQXiACQYACaiIDQTgQ0AEaIAJBATYCuAIgAkHAAmpBOBDQARogAkH4AmpBATYCACACQYADaiIEIAYQXiACIAEQESAFIAFBgAFqIgcQESADIAcQmQEgAyABEJoBIAQgABCaASADEKkBIAQQqQEgBCADEBEgAyACEJkBIAMQNiAEIAMQmgEgBBCpASADIAUQmQEgAxA2IAYgBBCZASAGIAMQmgEgBRB8IAAgBRCZASAAIAIQmgEgABCwASACQYAEaiQAC28BDH9BjL/AACgCACICRQRAQZy/wABB/x82AgBBAA8LQYS/wAAhBgNAIAIiASgCCCECIAEoAgQhAyABKAIAIQQgAUEMaigCABogASEGIAVBAWohBSACDQALQZy/wAAgBUH/HyAFQf8fSxs2AgBBAAuAAgEGfyMAQYAIayIBJAAgACgCgAZBAUcEQCABIAAQjAEgAUGAAmoiAiAAQYACaiIEEIwBIAFBgARqIgUgAEGABGoiAxCMASABQYAGaiIGIAAQjAEgARAhIAIgAxAYIAIQswEgAhCwASAFECEgBiAEEBggBhCzASADIAAQlwEgAyAEEJcBIAMQsAEgAxAhIAAgARCWASABIAIQlwEgARCwASABIAUQlwEgASAGEJcBIAEQsAEgARArIAIQZCAFEGQgACACEJcBIAQgBRCWASAEIAYQlwEgAyABEJcBIABBBEEFIAAoAoAGQX5xQQJGGzYCgAYgABCdAQsgAUGACGokAAuZAgEBfyMAQYANayIDJAAgAyABEGkgAxCdASADQYgGaiIBIAIQXSABEEIgA0HABmoiAiABEF0gAkEDECkaIAIQQiADQfgGaiADEGkCQCACEFdFBEAgA0HABmoQKkECayECA0AgAkEBakEBTQRAIANB+AZqIgEQnAEMAwUgA0H4BmoQEwJAAkACQCADQcAGaiACEFMgA0GIBmogAhBTa0EBag4DAQIAAgsgA0H4BmogAxAHDAELIAMQngEgA0H4BmogAxAHIAMQngELIAJBAWshAgwBCwALAAsgA0H4BmoiARC3ASABQYABahC2ASABQYACahCxASABQYAEahCxASABQQE2AoAGCyAAIAFBiAYQ0QEaIANBgA1qJAALhgICBH8BfiMAQTBrIgIkACABQQRqIQQgASgCBEUEQCABKAIAIQMgAkEQaiIFQQA2AgAgAkIBNwMIIAIgAkEIajYCFCACQShqIANBEGopAgA3AwAgAkEgaiADQQhqKQIANwMAIAIgAykCADcDGCACQRRqIAJBGGoQDBogBEEIaiAFKAIANgIAIAQgAikDCDcCAAsgAkEgaiIDIARBCGooAgA2AgAgAUEMakEANgIAIAQpAgAhBiABQgE3AgQgAiAGNwMYQQxBBBC5ASIBRQRAQQxBBBDPAQALIAEgAikDGDcCACABQQhqIAMoAgA2AgAgAEGEt8AANgIEIAAgATYCACACQTBqJAAL5AEBAn8jAEHAAWsiAyQAIAMQZyAAIAEgAkEfdSIEIAJzIARBf3NqQQJtIgJBAWtBH3YQbiAAIAFBwAFqIAJBAXNBAWtBH3YQbiAAIAFBgANqIAJBAnNBAWtBH3YQbiAAIAFBwARqIAJBA3NBAWtBH3YQbiAAIAFBgAZqIAJBBHNBAWtBH3YQbiAAIAFBwAdqIAJBBXNBAWtBH3YQbiAAIAFBgAlqIAJBBnNBAWtBH3YQbiAAIAFBwApqIAJBB3NBAWtBH3YQbiADIAAQeCADEKQBIAAgAyAEQQFxEG4gA0HAAWokAAvDAwIGfwN+IwBB8ABrIgEkACABQcCywAAQSSABQThqIAEQXSAAEEICQAJAAkAgAQJ/IAAoAjgiAkEQTARAIAJBAWsQNQwBCyABKQMwIghCAXwiByAIVA0BIAApAzAiCEKAgICAgICAgIB/USAHQn9RcQ0CIAFBOGoiAiAIIAd/pxApIQcgASABKQNoIAdCOoZ8NwNoIAAgAhBhIAAQQkECCyIEECgDQCAERQ0DQQAhAyABIAEpAwgiCEI5hkKAgICAgICAgAKDIAEpAwBCAYeEIgc3AwAgACkDACAHfSEHIABBCGohBSAAIAFBOGoiAkEBA38gAiADaiAHQv//////////A4M3AwAgB0I6hyEHIANBKEYEfyABIAEpAzBCAYciCDcDMCACIAApAzAgCH0gB3wiBzcDMCAHQj+IpwUgASADaiIGQQhqIAhCAYcgBkEQaikDACIIQjmGQoCAgICAgICAAoOEIgk3AwAgAyAFaikDACAHfCAJfSEHIANBCGohAwwBCwtrEDAgBEEBayEEDAALAAtB4LPAAEEZQcSzwAAQWQALQYC0wABBH0HEs8AAEFkACyAAQQE2AjggAUHwAGokAAvuAQECfyMAQbABayIDJAAgA0EwENABIQMCQAJAA0AgAkEwRgRAIANBMGogAxBwIAFBMGohAUEAIQIDQCACQTBGDQMgAkEwRg0EIAIgA2ogASACai0AADoAACACQQFqIQIMAAsACyACQeAARwRAIAIgA2ogASACai0AADoAACACQQFqIQIMAQsLQeAAQeAAQYCmwAAQOwALIANB8ABqIgEgAxBwIABBOBDQASIAQQE2AjggAEFAa0E4ENABIABB+ABqQQE2AgAgACABEK4BIANBMGoQrgEgA0GwAWokAA8LIAJBMGpB4ABBkKbAABA7AAuPAgEDfyMAQSBrIgUkAEEBIQZB2LvAAEHYu8AAKAIAIgdBAWo2AgACQEGgv8AALQAABEBBpL/AACgCAEEBaiEGDAELQaC/wABBAToAAAtBpL/AACAGNgIAAkACQCAHQQBIIAZBAktyDQAgBSAEOgAYIAUgAzYCFCAFIAI2AhBBzLvAACgCACICQQBIDQBBzLvAACACQQFqIgI2AgBBzLvAAEHUu8AAKAIAIgMEf0HQu8AAKAIAIAUgACABKAIQEQAAIAUgBSkDADcDCCAFQQhqIAMoAhQRAABBzLvAACgCAAUgAgtBAWs2AgAgBkEBSw0AIAQNAQsACyMAQRBrIgIkACACIAE2AgwgAiAANgIIAAucAQEEfyMAQYADayICJAAgAiAAEF4gAkGAAWoiASAAQYABaiIEEF4gAkGAAmoiAyAAEF4gAyAEEBEgAiAEEJoBIAEQfCABIAAQmgEgAhCpASABEKkBIAAgAhCZASAAIAEQESABIAMQmQEgARB8IAEgAxCaASABEKkBIAEQNiAAIAEQmgEgAxC4ASAEIAMQmQEgABCwASACQYADaiQAC7kBAQJ/IwBBIGsiAyQAAkAgASABIAJqIgFLDQAgAEEEaigCACICQQF0IgQgASABIARJGyIBQQggAUEISxshAQJAIAIEQCADQRhqQQE2AgAgAyACNgIUIAMgACgCADYCEAwBCyADQQA2AhALIAMgASADQRBqECYgAygCAARAIANBCGooAgAiAEUNASADKAIEIAAQzwEACyADKAIEIQIgAEEEaiABNgIAIAAgAjYCACADQSBqJAAPCxBlAAusAQECfyMAQYADayIDJAAgA0EIaiABEJABAkAgAgRAIANBCGogAhCuAQwBCyADQQhqEDoLIANByABqIgJB8LTAABBJIANBgAFqIAIQjgEgA0HAAWoiAiADQQhqIgQQkAEgAhBMIAIgARBKIAAgARCQASAAIAQQSiADQYACaiACEJABIAAQViEBIANBwAJqIgIgABCQASACEEMgAhBCIAAgAiABEHIgA0GAA2okAAueAQEFfyMAQYABayICJAAgAkE4ENABIgJBATYCOCACQUBrIgNBOBDQARogAkEBNgJ4IAIgABCuASACIAFBgAFqIgUQSiADIAEQrgEgAyAAQYABaiIGEEoCQCACIAMQWEUNACACIABBQGsQrgEgAiAFEEogAkFAayIAIAFBQGsQrgEgACAGEEogAiAAEFhFDQBBASEECyACQYABaiQAIAQLpwEBA38jAEEwayICJAAgAUEEaiEDIAEoAgRFBEAgASgCACEBIAJBEGoiBEEANgIAIAJCATcDCCACIAJBCGo2AhQgAkEoaiABQRBqKQIANwMAIAJBIGogAUEIaikCADcDACACIAEpAgA3AxggAkEUaiACQRhqEAwaIANBCGogBCgCADYCACADIAIpAwg3AgALIABBhLfAADYCBCAAIAM2AgAgAkEwaiQAC5UBAQJ/AkACQAJAAkACfwJAAkACf0EBIgMgAUEASA0AGiACKAIAIgRFDQEgAigCBCICDQQgAQ0CQQEMAwshA0EAIQEMBgsgAQ0AQQEMAQsgAUEBELkBCyICRQ0BDAILIAQgARCsASICDQELIAAgATYCBEEBIQEMAQsgACACNgIEQQAhAwsgACADNgIAIABBCGogATYCAAvvMwISfwV+IwBBMGsiDiQAIA5BEGogACABEFsgDiAOKAIUIgA2AhwgDiAOKAIQIgg2AhggDkEIaiACIAMQWyAOIA4oAgwiATYCJCAOIA4oAggiAzYCICAOIAQgBRBbIA4gDigCBCIFNgIsIA4gDigCACINNgIoIAAhBCMAQZAVayICJAAjAEGwBmsiCiQAIApBEGpBOBDQARogCkHQAGpBOBDQASEVIApBiAFqQQE2AgAgCkEBNgJIIApBkAFqIgBB2KTAABBJIAAQKiEPIApByAFqIhNBgAIQ0AEaIApB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ABBJAkACQAJAAkADQAJAIAxBMEYEQCAAIAAtAABBH3E6AAAgAEHoAGogABC+ASAEDQFBAEEAQZiBwAAQOwALIAQgDEYNAiAAIAxqIAggDGotAAA6AAAgDEEBaiEMDAELC0EAIQwgCCwAACIJQQBIDQIgCEEwaiEDIARBMCAEQTBLG0EwayEIA0AgDEEwRgRAIABBoAFqIgQgABC+ASMAQYABayIDJAAgARBnIAEgAEHoAGoQwAEgAUFAayIIIAQQwAEgAUGAAWoQygEgARBCIAMgARBPIANBQGsiBCAIEJABIAQQTCAEIAMQWEUEQCABEJIBCyADQYABaiQADAULIAggDEYNAiAAIAxqIAMgDGotAAA6AAAgDEEBaiEMDAALAAsgBCAEQYiBwAAQOwALIAxBMGogBEGogcAAEDsACyMAQcABayIDJAAgAEGgAWoiBBBnIANBOBDQASIDQQE2AjggBCAAQegAahDAASAEEEIgBEGAAWoQygEgA0FAayIIIAQQTwJAAkACQCAIIAMQWkEBRgRAIANBgAFqIgggA0FAayADECMgCBBWDQEMAgsgBBCSAQwCCyADQYABaiIIEEMgCBBCCyAEQUBrIANBgAFqEK4BCyADQcABaiQAIAlBIHEiA0EAIABB4AFqEE0iBEEBRxtBASADIARBAUdyGwRAIABBoAFqEKQBCyABIABBoAFqQcABENEBGgsgAEHgAmokAAJ/QQAhAyMAQcAFayIAJAACQCABEIYBDQAgAEEIaiIIQZCtwAAQSSAAQYAEaiIEQbiuwAAQSSAAQUBrIgkgBBCOASAAQYABaiIEEGcgBCABEHggBCAJEEogAEHAAmoiBCABIAgQvQEgASAEECQNACAAQYAEaiIEIABBwAJqIgEgAEEIahC9ASABIARBwAEQ0QEaIAEQpAEgAEGAAWogARAkRQ0AQQEhAwsgAEHABWokAEF/IANFDQAaIAJBwAFqEKQBIAJBgANqIQhBACEAIwBB4ARrIgEkACABQeAAENABIQECQCAFBEADQCAAQeAARgRAIAEgAS0AAEEfcToAACABQeAAaiABEB9BACEAAkAgDSwAACILQQBOBEAgDUHgAGohAyAFQeAAIAVB4ABLG0HgAGshBANAIABB4ABGBEAgAUHgAWoiACABEB8gCCABQeAAaiAAED8MAwsgACAERwRA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AWoQmQEgACAEEBEgAEGAAWoiASAFQYABahCZASABIAgQESAAIAEQeg0BC0EADAELQQELIQEgAEGAAmokACANQcAHaiQAQX8gAUUNABojAEHgA2siACQAIABBgAFqIgFBwKjAABBJIABBuAFqIgNB+KjAABBJIAAgASADEEsgAEHwAmoiAUGwqcAAEEkgAEGoA2oiA0HoqcAAEEkgAEHwAWoiBCABIAMQSyACQYAGaiIBIAAgBBA/IABB4ANqJAAgAkGACWohByACQYADaiEIIwBBkDRrIgAkACAAQYAoaiIDQcitwAAQSSAAQYguaiIEQYCuwAAQSSAAIAMgBBBLIABBgAFqQTgQ0AEaIABBuAFqQTgQ0AEaIABB8AFqED0CQCACQcABaiIEEIYBRQRAIAIQhgEEQCAHIAEgBBAODAILIABB8ARqIgMQPSADIAEQfSADEEcgAEHwB2oiBRBnIAUgBBB4IAUQRiAAQbAJaiIEED0gBCAIEH0gBBBHIABBsAxqIggQZyAIIAIQeCAIEEYgAEGILmoiASAFEJABIABB8A1qIAEQkAEgASAAQbAIahCQASAAQbAOaiABEJABIAEgCBCQASAAQfAOaiABEJABIAEgAEHwDGoQkAEgAEGwD2ogARCQASAAQfAPaiIBED0gAEHwEmoiBRA9IABB8BVqEFUgASADEH0gBSAEEH0gAEH4G2oiARA9IAEgAxB9IAEQogEgAEH4HmoiARA9IAEgBBB9IAEQogEgAEG4AWogAEGAAWoQUEECayEBA0AgAUEBakEBTQRAIABB8BVqIgEQngEgByABQYgGENEBGgwDBSAAQfAVaiIEEBogAEH4IWoiAyAAQfAPaiAAQfANaiAAQbAOahALIABBgChqIgUgAEHwEmogAEHwDmogAEGwD2oQCyADIAUQAyAEIAMQAQJAAkACQCAAQbgBaiABEFMgAEGAAWogARBTa0EBag4DAQIAAgsgAEGILmoiAyAAQfAPaiAAQfAEaiAAQfANaiAAQbAOahAKIABB+CFqIgQgA0GIBhDRARogAyAAQfASaiAAQbAJaiAAQfAOaiAAQbAPahAKIAQgAxADIABB8BVqIAQQAQwBCyAAQYguaiIDIABB8A9qIABB+BtqIABB8A1qIABBsA5qEAogAEH4IWoiBCADQYgGENEBGiADIABB8BJqIABB+B5qIABB8A5qIABBsA9qEAogBCADEAMgAEHwFWogBBABCyABQQFrIQEMAQsACwALIAcgCCACEA4LIABBkDRqJAAjAEHgH2siCCQAIAhB0BNqIgFByK3AABBJIAhB2BlqIg1BgK7AABBJIAggASANEEsgCEGAAWoiC0GQrcAAEEkgAkGID2oiACAHEGkgCEG4AWoiBSAAEGkjAEGACGsiAyQAIAMgBRCMASADQYACaiIJIAVBgAJqIg8QjAEgA0GABGoiCiAFEIwBIANBgAZqIgRBOBDQARogA0EBNgK4BiADQcAGakE4ENABGiADQfgGakEBNgIAIANBgAdqQTgQ0AEaIANBuAdqQQE2AgAgA0HAB2pBOBDQARogA0H4B2pBATYCACAFEJ0BIAMQISAJIAVBgARqIgwQGCAJEGQgAyAJEHkgAxCwASAJIAwQlgEgCRAhIAkQZCAKIA8QGCAJIAoQeSAJELABIAogDxCWASAKECEgBCAFEJYBIAQgDBAYIAogBBB5IAoQsAEgBCAPEJYBIAQgChAYIAQQZCAFIAMQGCAEIAUQlwEgDCAJEBggDBBkIAQgDBCXASAEELABIwBBgAJrIgYkACAGIAQQXiAGQYABaiIQIARBgAFqIhIQXiAGEC0gEBAtIBAQfCAQEKkBIAYgEBB7IAYQPiAEIAYQESAGEDYgBhCpASASIAYQESAGQYACaiQAIAUgAxCWASAFIAQQGCAPIAkQlgEgDyAEEBggDCAKEJYBIAwgBBAYIAVBBTYCgAYgA0GACGokACAAEJ4BIAAgBRAHIAUgABBtIAAgCBAyIAAgCBAyIAAgBRAHIAhBwAdqIgQgABBpIAQQEyAEIAAQByANIAAgCxAbIAhByA1qIgMgDRBpIAMQngEgASAAEGkgARCeASAAIAMQbSAAIAEQByANIAAgCxAbIAMgDRBtIAMQngEgASAAEG0gARCeASAAIAMQbSAAIAEQByANIAAgCxAbIAMgDRBtIAMQngEgASAAEG0gASAIEDIgACADEG0gACABEAcgDSAAIAsQGyADIA0QbSANIAMgCxAbIAMgDRBtIAEgABBtIAEgCBAyIAEgCBAyIAMgARAHIAEgABBtIAEQngEgACADEG0gACABEAcgACAEEAcgABCcASAIQeAfaiQAIAcgAEGIBhDRARpBACEAIwBBgAJrIgEkACABEGwCQCAHIAEQegR/IAdBgAFqIAFBgAFqEHoFQQALRQ0AIAdBgAJqEIcBRQ0AIAdBgARqEIcBIQALIAFBgAJqJABBACAADQAaQX8LIAJBkBVqJAAgDkEoahC0ASAOQSBqELQBIA5BGGoQtAEgDkEwaiQAC58BAgJ/BX4gAEEwaiICKQMAIAFBP3GtIgSGIQUgACkDKCIGQTogAWtBP3GtIgiHIQdBBiEBA38gAiAFIAeENwMAIAFBAU0EfyAAIAApAwAgBIZC//////////8DgzcDACAAKQMwQiSHpwUgAUEBayEBIAJBEGsiA0EIaiECIAYgBIZC//////////8DgyEHIAMpAwAiBiAIhyEFDAELCxoLiAECA34DfyMAQRBrIgUkAAN+IAZBOEYEfiAFQRBqJAAgAwUgBSAAIAZqIgcpAwAiAiACQj+HIAGsIgIgAkI/hxAvIAcgBSkDACIEIAN8IgJC//////////8DgzcDACACIARUrSAFQQhqKQMAIANCP4d8fEIGhiACQjqIhCEDIAZBCGohBgwBCwsLigECA38BfiMAQUBqIgIkACACQQhqIgEgABBdIAEQQiACQThqIQFBBiEDQdwCIQACQAJAA0AgA0EATgRAIAEpAwAiBEIAUg0CIAFBCGshASAAQTprIQAgA0EBayEDDAELC0EAIQAMAQsDQCAEUA0BIABBAWohACAEQgJ/IQQMAAsACyACQUBrJAAgAAuHAQEDfyMAQYACayIBJAAgABCwASABIAAQXiABQYABaiICQTgQ0AEaIAFBATYCuAEgAUHAAWpBOBDQARogAUH4AWpBATYCACABIABBgAFqIgMQmgEgARA2IAIgARCZASACIAMQmgEgAyABEJkBIAMgABCaASAAIAIQmQEgABCwASABQYACaiQAC30CBH4BfyABQT9xrSECQTogAWtBP3GtIQRBACEBIAApAwAiBSEDA38gAUEwRgR/IAAgACkDMCAChzcDMCAFQn8gAoZCf4WDpwUgACABaiIGIAMgAocgBkEIaikDACIDIASGQv//////////A4OENwMAIAFBCGohAQwBCwsaC2kBBH8jAEHAAWsiASQAIAEgABCQASABQUBrIgIgABCQASABQYABaiIDIABBQGsiBBCQASABIAQQdyACIAAQdyACEEIgBCACEEogAxBDIAAgAxB3IAEQQiAAEEIgACABEEogAUHAAWokAAuCAQIBfwF+IABB8AAQ0AEhAANAIAJBOEYEQAJAIAAgASkDMCIDQjqHNwM4IAAgA0L//////////wODNwMwIABBQGshAEEAIQIDQCACQTBGDQEgACACakIANwMAIAJBCGohAgwACwALBSAAIAJqIAEgAmopAwA3AwAgAkEIaiECDAELCwtuAQZ+IAAgA0L/////D4MiBSABQv////8PgyIGfiIHIAUgAUIgiCIIfiIJIAYgA0IgiCIGfnwiBUIghnwiCjcDACAAIAcgClatIAYgCH4gBSAJVK1CIIYgBUIgiIR8fCABIAR+IAIgA358fDcDCAtqAgF/BX4gASkDCCAAKQMAhSIGQgGGQgGHIQdBACACa6whCAN+IANBOEYEfiAFBSAAIANqIgIgAikDACIEIAaFIAEgA2opAwAgBIUgCIOFIgQgB4U3AwAgBCAFhSEFIANBCGohAwwBCwsaC18CAX8EfkIBIQNBMCECA38gAkF4RgR/IARCAYYgA3ynQQFrBSABIAJqKQMAIgUgACACaikDACIGfUI6hyADgyAEhCEEIAJBCGshAiAFIAaFQgF9QjqHIAODIQMMAQsLC2kBBH8jAEGAAmsiAiQAIAIgARBeIAJBgAFqIgMgARBeIAIQLSADIAIQESAAIAMQmAEgAEGAAmoiBCADEJgBIABBgARqIgUgAxCYASAEIAEQpgEgBSACEKYBIABBBTYCgAYgAkGAAmokAAtiAQJ/IwBBQGoiAiQAIAAQQiACIAAQkAECQCABBEAgACABEK4BDAELIAAQOgtBACEBA0AgA0UEQCAAEExBASABQQFqIAFBAUYiAxshAQwBCwsgACACEEogABAeIAJBQGskAAtnAQJ/IwBBQGoiAyQAAkAgASABQR91IgJqIAJzIgIgACgCOGxBgICAEE4EQCADIAIQOSAAIAMQSgwBCyAAIAIQKRogACAAKAI4IAJsNgI4CyABQQBIBEAgABBDIAAQQgsgA0FAayQAC2cAIABBAXYgAHIiAEECdiAAciIAQQR2IAByIgBBCHYgAHIiAEEQdiAAciIAIABBAXZB1arVqgVxayIAQQJ2QbPmzJkDcSAAQbPmzJkDcWoiAEEEdiAAakGPnrz4AHFBgYKECGxBGHYLYQEDfyMAQYABayIBJAAgASAAEJABIAFBQGsiAkE4ENABGiABQQE2AnggASAAQUBrIgMQdyABEEMgAiABEK4BIAIgAxB3IAMgARCuASADIAAQdyAAIAIQrgEgAUGAAWokAAtVAgJ/AX4jAEHwAGsiASQAIAFBwLLAABBJIAApAwAhAyABQThqIgIgABBdIABBARAsIAIgARBgIAIQQiACQQEQLCAAIAIgA0ICgacQMCABQfAAaiQAC5gBAQZ/IwBBwAFrIgMkACAAIAEQXiAAEC0gA0GIAWoiBkHop8AAEEkjAEFAaiIEJAAgA0EIaiICQTgQ0AEiBUEBNgI4IAVBQGtBOBDQASAFQfgAakEBNgIAIAQgBhCOASAFIAQQrgEQwQEgBEFAayQAIAIQqQEgAhB8IAIQqQEgACABEBEgACACEJoBIAAQtQEgA0HAAWokAAtZAQJ/IwBBQGoiAyQAIABBOBDQASIAQQE2AjgCQCABQQBOBEAgACABEJMBDAELIANBCGoiAkHAssAAEEkgAiABEJMBIAIQQiAAIAIQagsgABBUIANBQGskAAu9CAEKfyMAQYABayIHJAAgB0EIaiIDQcCywAAQSSADQQEQlAECQAJAA0AgAUEwRgRAIANBMGogAykDMEIBhzcDACADQThqIQEDQCACRQ0EIAFCADcDACACQQFrIQIgAUEIaiEBDAALAAsgAUE4Rg0BIAFBOEcEQCABIANqIAEgA2oiBEEIaikDAEI5hkL//////////wODIAQpAwBCAYeENwMAIAVBAWohBSABQQhqIQEMAQsLQQdBB0GEm8AAEDsACyAFQQdB9JrAABA7AAsgA0EBEJQBIANBARAsIAdBQGshBUEAIQIjAEGgCmsiASQAIAFBOBDQASIBQUBrQTgQ0AEhBiABQYABakE4ENABGiABQcABakE4ENABGiABQYACakE4ENABGiABQcACakE4ENABGiABQYADakE4ENABGiABQcADakE4ENABGiABQYAEakE4ENABGiABQcAEakE4ENABGiABQYAFakE4ENABGiABQcAFakE4ENABGiABQYAGakE4ENABGiABQcAGakE4ENABGiABQYAHakE4ENABGiABQcAHakE4ENABGiABQfgHakEBNgIAIAFBuAdqQQE2AgAgAUH4BmpBATYCACABQbgGakEBNgIAIAFB+AVqQQE2AgAgAUG4BWpBATYCACABQfgEakEBNgIAIAFBuARqQQE2AgAgAUH4A2pBATYCACABQbgDakEBNgIAIAFB+AJqQQE2AgAgAUG4AmpBATYCACABQfgBakEBNgIAIAFBuAFqQQE2AgAgAUH4AGpBATYCACABQQE2AjggAUGBCGpB5wAQ0AEaIAFB6AhqIgQgABCQASAEEEIgAUGoCWoiBCADEF0gBBBCIAQQKkEDaiIIQQJ2IgNBAWohCQJAA0AgAiAJRgRAIAEQygEgBiABQegIahCuASABQeAJakE4ENABGiABQQE2ApgKQYB5IQIMAgsgAUGoCWoiBCAEQQQQjwEiChCUASAEEEIgAkHnAEcEQCABQYEIaiACaiAKOgAAIAFBqAlqQQQQLCACQQFqIQIMAQsLQecAQecAQaC0wAAQOwALA0AgAgRAIAFB4AlqIgQgASACaiIGQcAHahCuASAGQYAIaiIGIAQQrgEgBiABQegIahBKIAJBQGshAgwBCwsCQAJAAkACQCAIQZwDSQRAIAFBgQhqIANqLAAAIgJBEE8NASAFIAEgAkEGdGoQkAEgA0EBayICQeYASyEEA0AgAkF/Rg0DIAUQTCAFEEwgBRBMIAUQTCAEDQQgAUGBCGogAmotAAAiA0EQSQRAIAUgASADQQZ0ahBKIAJBAWshAgwBCwsgA0EYdEEYdUEQQeC0wAAQOwALIANB5wBBsLTAABA7AAsgAkEQQcC0wAAQOwALIAUQHiABQaAKaiQADAELIAJB5wBB0LTAABA7AAsgACAFEK4BIAdBgAFqJAALbAEBfyMAQTBrIgMkACADIAE2AgQgAyAANgIAIANBHGpBAjYCACADQSxqQQE2AgAgA0ICNwIMIANB2LjAADYCCCADQQE2AiQgAyADQSBqNgIYIAMgAzYCKCADIANBBGo2AiAgA0EIaiACEGYAC2UBAn8gACAAKAIAIgJBCGoiAzYCACAAIAJBA3ZBPHFqQShqIgIgAUH/AXEgAigCAEEIdHI2AgACQAJAIANFBEAgAEEANgIAIAAgACgCBEEBajYCBAwBCyADQf8DcQ0BCyAAEA8LC1wAIABBOBDQASIAQQE2AjggAEFAa0E4ENABGiAAQfgAakEBNgIAIABBgAFqEFEgAEGAAmpBOBDQARogAEG4AmpBATYCACAAQcACakE4ENABGiAAQfgCakEBNgIAC1sBA38jAEGAAWsiASQAIAAQqQEgASAAEJABIAFBQGsiAiAAQUBrIgMQkAEgARBMIAIQTCABIAIQdyABQQAQMyAAIAEQSiABEEMgARBCIAMgARBKIAFBgAFqJAALYQEBfyMAQYACayIDJAAgABA9IAAgARCZASAAQYABaiIBIAIQmQEgAEGAAmoQtwEgABCpASADIAAQOCADQYABaiICIAEQXiACEC0gAiADEHpFBEAgABCbAQsgA0GAAmokAAtUAQF/IwBBIGsiAiQAIAIgACgCADYCBCACQRhqIAFBEGopAgA3AwAgAkEQaiABQQhqKQIANwMAIAIgASkCADcDCCACQQRqIAJBCGoQDCACQSBqJAALZwAjAEEwayIBJABBpLvAAC0AAARAIAFBHGpBATYCACABQgI3AgwgAUGQtsAANgIIIAFBATYCJCABIAA2AiwgASABQSBqNgIYIAEgAUEsajYCICABQQhqQbi2wAAQZgALIAFBMGokAAtiAgF+An8gACkDACEBA34gACACaiIDIAFC//////////8DgzcDACABQjqHIQEgAkEoRgR+IAAgACkDMCABfCIBNwMwIAFCJIcFIAJBCGohAiADQQhqKQMAIAF8IQEMAQsLGgt8AQV/IwBBQGoiAyQAIANBCGoiAkHAssAAEEkgAiAAKAI4QQFrEDUiBBAoA0AgAUE4RwRAIAAgAWoiBSABIAJqKQMAIAUpAwB9NwMAIAFBCGohAQwBCwsgAEEBIARBAWp0IgI2AjggAkH///8PSgRAIAAQHgsgA0FAayQAC3sBAn8gAEEoaiECA0AgAUGAAkYEQCAAQufMp9DW0Ouzu383AgggAEIANwIAIABBIGpCq7OP/JGjs/DbADcCACAAQRhqQv+kuYjFkdqCm383AgAgAEEQakLy5rvjo6f9p6V/NwIABSABIAJqQQA2AgAgAUEEaiEBDAELCwtUACAAQTgQ0AEiAEEBNgI4IABBQGtBOBDQARogAEH4AGpBATYCACAAQYABakE4ENABGiAAQbgBakEBNgIAIABBwAFqQTgQ0AEaIABB+AFqQQE2AgALWAECfyMAQUBqIgEkAAJAIAAQhgENACABQQEQOSAAQYABaiICIAEQWA0AIAJBABAzIAAgAhBKIAAQHiAAQUBrIgAgAhBKIAAQHiACIAEQrgELIAFBQGskAAtZAQJ/IwBBgAFrIgEkAAJAIAAQigENACABEFEgAEGAAmoiAiABEHoNACACED4gACACEBEgABC1ASAAQYABaiIAIAIQESAAELUBIAIgARCZAQsgAUGAAWokAAtbAgF+An8gACkDACEBA0AgACACaiIDIAFC//////////8DgzcDACABQjqHIQEgAkHgAEYEQCAAIAApA2ggAXw3A2gFIAJBCGohAiADQQhqKQMAIAF8IQEMAQsLC08BAX8gAEE4ENABGgJAA0AgAkEHRwRAIAJBB0YNAiAAIAEpAwA3AwAgAEEIaiEAIAFBCGohASACQQFqIQIMAQsLDwtBB0EHQeSawAAQOwALVAECfyMAQbABayICJAAgATQCOCAANAI4fkL///8PVQRAIAAQHgsgAkEIaiIDIAAgARAFIAJB+ABqIgEgAxBrIAAgARBqIABBAjYCOCACQbABaiQAC1EBAn8jAEFAaiIDJAAgAEE4ENABIgBBATYCOCAAQUBrQTgQ0AEgAEH4AGpBATYCACADIAEQjgEgACADEK4BIAMgAhCOASADEK4BIANBQGskAAvwDAIRfwh+IwBBsAFrIg8kACAANAI4IhIgEn5C////D1YEQCAAEB4LIwBB0AFrIgEkACAPQQhqIgZBCGpB0AAQ0AEaIAFBwAFqIAApAwAiFyAXQj+HIhYgFyAWEC8gBiABKQPAASISQv//////////A4M3AwAgAUHIAWopAwAiFUIGhiASQjqIhCETIBVCOoghGCAAQQhqIgwhDSAAIQlBASEKQQEhBwJAA0AgCkEERgRAIABBGGohCiAAQRBqIQkgAEEoaiEMIAApAzAhF0EHIQUgAUHIAGohCwNAIAVBC0kEQCABQUBrIAVBA3QiCCAAakEwaykDACISIBJCP4cgFyAXQj+HIhYQLyAFQQFqIg1BAXYhByALKQMAIRUgASkDQCESIAkhAiAMIQQgBUEFayIOIQMDQCADIAdJBEAgASACKQMAIhQgFEI/hyAEKQMAIhQgFEI/hxAvIAEpAwAiFCASfCISIBRUrSABQQhqKQMAIBV8fCEVIAJBCGohAiAEQQhrIQQgA0EBaiEDDAELCyAGIAhqIBJCAYYiFCATfCITQv//////////A4M3AwAgAUEwaiAAIA5BA3RqKQMAIhkgGUI/hyAXIBYQLyATIBRU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aikDADcDACACQQhqIQIMAQsLC4QJAg1/Cn4jAEFAaiILJAAgC0EIaiIJQcCywAAQSSMAQZACayICJAAgAEEwENABIQogAkHoAGpB8AAQ0AEaIAJB4AFqQTAQ0AEaIAoQcSACIAEiDCkDACIQQv3/8//P///5AX5C//////////8DgyISNwPYASACQdgAaiASQgAgCSkDACIXIBdCP4ciGBAvIBAgAikDWCIPfCITIA9UrSACQeAAaikDACAQQj+HfHwiEEI6hyABKQMIIg9CP4d8IA8gEEIGhiATQjqIhCITfCIQIBNUrXwhD0EBIQBCACETAkACQANAAkAgAEEHRgRAQQYhB0EAIQhBByEADAELIABBAXYiAUEBaiEGIAggAWshAyABQQN0IgFBCGohBCAHIAFrIQUgAkHIAGogCSAAQQN0Ig1qKQMAIhUgFUI/hyIWIBJCABAvIAJB0ABqKQMAIBAgECATfCIRVq0gDyAUfHx8IBEgAikDSHwiDyARVK18IRAgAEEBaiEBA0AgACAGTQRAIAJB2AFqIA1qIA9C/f/z/8////kBfkL//////////wODIhE3AwAgAkE4aiARQgAgFyAYEC8gAkEoaiARQgAgFSAWEC8gAkHoAGogAEEEdGoiACACQTBqKQMAIhE3AwggACACKQMoIhU3AwAgDyACKQM4IhZ8Ig8gFlStIAJBQGspAwAgEHx8IhBCOocgDCABQQN0aikDACIWQj+HfCAWIBBCBoYgD0I6iIQiD3wiECAPVK18IQ8gEyAVfCITIBVUrSARIBR8fCEUIAdBCGohByAIQQFqIQggASEADAMLIANBB08NAyACQRhqIAQgCWopAwAgBSAJaikDAH0iESARQj+HIAJB2AFqIg4gBWopAwAgBCAOaikDAH0iESARQj+HEC8gAikDGCIRIA98Ig8gEVStIAJBIGopAwAgEHx8IRAgBkEBaiEGIARBCGohBCAFQQhrIQUgA0EBayEDDAALAAsLA0ACQAJAIABBDUcEQCAHIABBAXYiBmshAyAIIAZBA3QiAWshBCABQQhqIQUgDyAUfCAQIBN8Ig8gEFStfCEQIABBAWohAQNAIAZBBUsNAyADQQdPDQIgAkEIaiAFIAlqKQMAIAQgCWpBMGopAwB9IhIgEkI/hyACIARqQYgCaikDACACQdgBaiAFaikDAH0iEiASQj+HEC8gAikDCCISIA98Ig8gElStIAJBEGopAwAgEHx8IRAgBkEBaiEGIARBCGshBCADQQFrIQMgBUEIaiEFDAALAAsgCiAQQv//////////A4M3AzAgAkGQAmokAAwECyADQQdBpJzAABA7AAsgAEEDdCAKakE4ayAPQv//////////A4M3AwAgEEI6hyAMIAFBA3RqKQMAIhJCP4d8IBIgEEIGhiAPQjqIhCIPfCIQIA9UrXwhDyAUIABBBHQgAmpBCGoiAEEIaikDAH0gEyAAKQMAIhJUrX0hFCAIQQhqIQggB0EBaiEHIBMgEn0hEyABIQAMAAsACyADQQdBlJzAABA7AAsgC0FAayQACy4BAX8jAEGAAWsiASQAIAAQRSABEFEgACABEJkBIABBgAFqELYBIAFBgAFqJAALMwAgACABEJYBIABBgAJqIAFBgAJqEJYBIABBgARqIAFBgARqEJYBIAAgASgCgAY2AoAGCygAIAAgASACEHIgAEFAayABQUBrIAIQciAAQYABaiABQYABaiACEHILLQAgACABIAIQjQEgAEGAAWogAUGAAWogAhCNASAAQYACaiABQYACaiACEI0BCycBAn8jAEFAaiICJAAgAkEIaiIDIAEQvgEgACADEI4BIAJBQGskAAsiAQF/A0AgAUE4RwRAIAAgAWpCADcDACABQQhqIQEMAQsLCyUAIAAgASACEDAgAEEAIAJrIAAoAjgiACABKAI4c3EgAHM2AjgLJwAgACAAKAIEQQFxIAFyQQJyNgIEIAAgAWoiACAAKAIEQQFyNgIECyMAA0AgAgRAIAAgAS0AABA8IAJBAWshAiABQQFqIQEMAQsLCywAIAAQiwEgACABEJYBIABBgAJqIAIQlgEgAEGABGogAxCWASAAQQU2AoAGCyMBAX8jAEFAaiIBJAAgASAAEJABIAEQHiABEFcgAUFAayQACykAIAAgARBgIAAgACgCOCABKAI4aiIBNgI4IAFB////D0oEQCAAEB4LCyUAIAAgARCuASAAQUBrIAFBQGsQrgEgAEGAAWogAUGAAWoQrgELKAEBfyMAQYACayICJAAgAiABEIwBIAIQKyAAIAIQlwEgAkGAAmokAAscAQF/IAAgARBYBH8gAEFAayABQUBrEFgFQQALCycBAX8jAEGAAWsiAiQAIAIg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DCELDQALCyAMpyICQeMASwRAIABBAmsiACAGQQlqaiAMpyICIAJB//8DcUHkAG4iAkHkAGxrQf//A3FBAXRB6LjAAGovAAA7AAALAkAgAkEKTwRAIABBAmsiACAGQQlqaiACQQF0Qei4wABqLwAAOwAADAELIABBAWsiACAGQQlqaiACQTBqOgAACwJ/IAZBCWogAGohCEErQYCAxAAgASgCACIDQQFxIgIbIQQgAkEnIABrIglqIQJBlLjAAEEAIANBBHEbIQUCQAJAIAEoAghFBEBBASEAIAEgBCAFEFINAQwCCwJAAkACQAJAIAIgAUEMaigCACIDSQRAIAEtAABBCHENBEEAIQAgAyACayICIQNBASABLQAgIgcgB0EDRhtBA3FBAWsOAgECAwtBASEAIAEgBCAFEFINBAwFC0EAIQMgAiEADAELIAJBAXYhACACQQFqQQF2IQMLIABBAWohACABQRxqKAIAIQcgASgCBCECIAEoAhghCgJAA0AgAEEBayIARQ0BIAogAiAHKAIQEQQARQ0AC0EBDAQLQQEhACACQYCAxABGDQEgASAEIAUQUg0BIAEoAhggCCAJIAEoAhwoAgwRBQANASABKAIcIQQgASgCGCEBQQAhAAJ/A0AgAyAAIANGDQEaIABBAWohACABIAIgBCgCEBEEAEUNAAsgAEEBawsgA0khAAwBCyABKAIEIQcgAUEwNgIEIAEtACAhCkEBIQAgAUEBOgAgIAEgBCAFEFINAEEAIQAgAyACayICIQMCQAJAAkBBASABLQAgIgQgBEEDRhtBA3FBAWsOAgABAgtBACEDIAIhAAwBCyACQQF2IQAgAkEBakEBdiEDCyAAQQFqIQAgAUEcaigCACECIAEoAgQhBCABKAIYIQUCQANAIABBAWsiAEUNASAFIAQgAigCEBEEAEUNAAtBAQwDC0EBIQAgBEGAgMQARg0AIAEoAhggCCAJIAEoAhwoAgwRBQANACABKAIcIQAgASgCGCEFQQAhAgJAA0AgAiADRg0BIAJBAWohAiAFIAQgACgCEBEEAEUNAAtBASEAIAJBAWsgA0kNAQsgASAKOgAgIAEgBzYCBEEADAILIAAMAQsgASgCGCAIIAkgAUEcaigCACgCDBEFAAsgBkEwaiQACwsAIAAQNiAAELABCysCAX8BfkIBIQIDQCAAIAFq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AAANAEHgs8AAC8EHYXR0ZW1wdCB0byBkaXZpZGUgYnkgemVybwAAAAAAAABhdHRlbXB0IHRvIGRpdmlkZSB3aXRoIG92ZXJmbG93ALAZEAASAAAADAIAAA0AAACwGRAAEgAAABgCAAAmAAAAsBkQABIAAAAYAgAAIwAAALAZEAASAAAAHgIAABcAAACwGRAAEgAAAB4CAAAUAAAAqqr//////gHu//9UrP//AupBYg9rDyoBw5z9ShTOEwJLd2TXrEtDAu3pxpKm+V8Cox4RoAEAAAADAAAABAAAAAQAAAAEAAAABQAAAAYAAABjYWxsZWQgYE9wdGlvbjo6dW53cmFwKClgIG9uIGEgYE5vbmVgIHZhbHVlbWVtb3J5IGFsbG9jYXRpb24gb2YgIGJ5dGVzIGZhaWxlZAoAAOsaEAAVAAAAABsQAA4AAABsaWJyYXJ5L3N0ZC9zcmMvYWxsb2MucnMgGxAAGAAAAEkBAAAJAAAAbGlicmFyeS9zdGQvc3JjL3Bhbmlja2luZy5yc0gbEAAcAAAARgIAAB8AAABIGxAAHAAAAEcCAAAeAAAABwAAAAwAAAAEAAAACAAAAAMAAAAIAAAABAAAAAkAAAAKAAAAEAAAAAQAAAALAAAADAAAAAMAAAAIAAAABAAAAA0AAAAOAAAAbGlicmFyeS9hbGxvYy9zcmMvcmF3X3ZlYy5yc2NhcGFjaXR5IG92ZXJmbG93AAAA6BsQABEAAADMGxAAHAAAAAUCAAAFAAAAEAAAAAAAAAABAAAAEQAAAGluZGV4IG91dCBvZiBib3VuZHM6IHRoZSBsZW4gaXMgIGJ1dCB0aGUgaW5kZXggaXMgAAAkHBAAIAAAAEQcEAASAAAAMDAwMTAyMDMwNDA1MDYwNzA4MDkxMDExMTIxMzE0MTUxNjE3MTgxOTIwMjEyMjIzMjQyNTI2MjcyODI5MzAzMTMyMzMzNDM1MzYzNzM4Mzk0MDQxNDI0MzQ0NDU0NjQ3NDg0OTUwNTE1MjUzNTQ1NTU2NTc1ODU5NjA2MTYyNjM2NDY1NjY2NzY4Njk3MDcxNzI3Mzc0NzU3Njc3Nzg3OTgwODE4MjgzODQ4NTg2ODc4ODg5OTA5MTkyOTM5NDk1OTY5Nzk4OTkgb3V0IG9mIHJhbmdlIGZvciBzbGljZSBvZiBsZW5ndGggbGlicmFyeS9jb3JlL3NyYy9zbGljZS9pbmRleC5yc3JhbmdlIGVuZCBpbmRleCAAAABxHRAAEAAAADAdEAAiAAAAUh0QAB8AAABJAAAABQB7CXByb2R1Y2VycwIIbGFuZ3VhZ2UBBFJ1c3QADHByb2Nlc3NlZC1ieQMFcnVzdGMdMS42MS4wIChmZTViMTNkNjggMjAyMi0wNS0xOCkGd2FscnVzBjAuMTkuMAx3YXNtLWJpbmRnZW4SMC4yLjgxICgwNjJhYTVmNzAp`;
+//# sourceMappingURL=wasm.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/candid-core.js":
+/*!******************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/candid-core.js ***!
+  \******************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   InputBox: () => (/* binding */ InputBox),
+/* harmony export */   InputForm: () => (/* binding */ InputForm),
+/* harmony export */   OptionForm: () => (/* binding */ OptionForm),
+/* harmony export */   RecordForm: () => (/* binding */ RecordForm),
+/* harmony export */   TupleForm: () => (/* binding */ TupleForm),
+/* harmony export */   VariantForm: () => (/* binding */ VariantForm),
+/* harmony export */   VecForm: () => (/* binding */ VecForm)
+/* harmony export */ });
+class InputBox {
+    constructor(idl, ui) {
+        this.idl = idl;
+        this.ui = ui;
+        this.label = null;
+        this.value = undefined;
+        const status = document.createElement('span');
+        status.className = 'status';
+        this.status = status;
+        if (ui.input) {
+            ui.input.addEventListener('blur', () => {
+                if (ui.input.value === '') {
+                    return;
+                }
+                this.parse();
+            });
+            ui.input.addEventListener('input', () => {
+                status.style.display = 'none';
+                ui.input.classList.remove('reject');
+            });
+        }
+    }
+    isRejected() {
+        return this.value === undefined;
+    }
+    parse(config = {}) {
+        if (this.ui.form) {
+            const value = this.ui.form.parse(config);
+            this.value = value;
+            return value;
+        }
+        if (this.ui.input) {
+            const input = this.ui.input;
+            try {
+                const value = this.ui.parse(this.idl, config, input.value);
+                if (!this.idl.covariant(value)) {
+                    throw new Error(`${input.value} is not of type ${this.idl.display()}`);
+                }
+                this.status.style.display = 'none';
+                this.value = value;
+                return value;
+            }
+            catch (err) {
+                input.classList.add('reject');
+                this.status.style.display = 'block';
+                this.status.innerHTML = 'InputError: ' + err.message;
+                this.value = undefined;
+                return undefined;
+            }
+        }
+        return null;
+    }
+    render(dom) {
+        const container = document.createElement('span');
+        if (this.label) {
+            const label = document.createElement('label');
+            label.innerText = this.label;
+            container.appendChild(label);
+        }
+        if (this.ui.input) {
+            container.appendChild(this.ui.input);
+            container.appendChild(this.status);
+        }
+        if (this.ui.form) {
+            this.ui.form.render(container);
+        }
+        dom.appendChild(container);
+    }
+}
+class InputForm {
+    constructor(ui) {
+        this.ui = ui;
+        this.form = [];
+    }
+    renderForm(dom) {
+        if (this.ui.container) {
+            this.form.forEach(e => e.render(this.ui.container));
+            dom.appendChild(this.ui.container);
+        }
+        else {
+            this.form.forEach(e => e.render(dom));
+        }
+    }
+    render(dom) {
+        if (this.ui.open && this.ui.event) {
+            dom.appendChild(this.ui.open);
+            const form = this;
+            // eslint-disable-next-line
+            form.ui.open.addEventListener(form.ui.event, () => {
+                // Remove old form
+                if (form.ui.container) {
+                    form.ui.container.innerHTML = '';
+                }
+                else {
+                    const oldContainer = form.ui.open.nextElementSibling;
+                    if (oldContainer) {
+                        oldContainer.parentNode.removeChild(oldContainer);
+                    }
+                }
+                // Render form
+                form.generateForm();
+                form.renderForm(dom);
+            });
+        }
+        else {
+            this.generateForm();
+            this.renderForm(dom);
+        }
+    }
+}
+class RecordForm extends InputForm {
+    constructor(fields, ui) {
+        super(ui);
+        this.fields = fields;
+        this.ui = ui;
+    }
+    generateForm() {
+        this.form = this.fields.map(([key, type]) => {
+            const input = this.ui.render(type);
+            // eslint-disable-next-line
+            if (this.ui.labelMap && this.ui.labelMap.hasOwnProperty(key)) {
+                input.label = this.ui.labelMap[key] + ' ';
+            }
+            else {
+                input.label = key + ' ';
+            }
+            return input;
+        });
+    }
+    parse(config) {
+        const v = {};
+        this.fields.forEach(([key, _], i) => {
+            const value = this.form[i].parse(config);
+            v[key] = value;
+        });
+        if (this.form.some(input => input.isRejected())) {
+            return undefined;
+        }
+        return v;
+    }
+}
+class TupleForm extends InputForm {
+    constructor(components, ui) {
+        super(ui);
+        this.components = components;
+        this.ui = ui;
+    }
+    generateForm() {
+        this.form = this.components.map(type => {
+            const input = this.ui.render(type);
+            return input;
+        });
+    }
+    parse(config) {
+        const v = [];
+        this.components.forEach((_, i) => {
+            const value = this.form[i].parse(config);
+            v.push(value);
+        });
+        if (this.form.some(input => input.isRejected())) {
+            return undefined;
+        }
+        return v;
+    }
+}
+class VariantForm extends InputForm {
+    constructor(fields, ui) {
+        super(ui);
+        this.fields = fields;
+        this.ui = ui;
+    }
+    generateForm() {
+        const index = this.ui.open.selectedIndex;
+        const [_, type] = this.fields[index];
+        const variant = this.ui.render(type);
+        this.form = [variant];
+    }
+    parse(config) {
+        const select = this.ui.open;
+        const selected = select.options[select.selectedIndex].value;
+        const value = this.form[0].parse(config);
+        if (value === undefined) {
+            return undefined;
+        }
+        const v = {};
+        v[selected] = value;
+        return v;
+    }
+}
+class OptionForm extends InputForm {
+    constructor(ty, ui) {
+        super(ui);
+        this.ty = ty;
+        this.ui = ui;
+    }
+    generateForm() {
+        if (this.ui.open.checked) {
+            const opt = this.ui.render(this.ty);
+            this.form = [opt];
+        }
+        else {
+            this.form = [];
+        }
+    }
+    parse(config) {
+        if (this.form.length === 0) {
+            return [];
+        }
+        else {
+            const value = this.form[0].parse(config);
+            if (value === undefined) {
+                return undefined;
+            }
+            return [value];
+        }
+    }
+}
+class VecForm extends InputForm {
+    constructor(ty, ui) {
+        super(ui);
+        this.ty = ty;
+        this.ui = ui;
+    }
+    generateForm() {
+        const len = +this.ui.open.value;
+        this.form = [];
+        for (let i = 0; i < len; i++) {
+            const t = this.ui.render(this.ty);
+            this.form.push(t);
+        }
+    }
+    parse(config) {
+        const value = this.form.map(input => {
+            return input.parse(config);
+        });
+        if (this.form.some(input => input.isRejected())) {
+            return undefined;
+        }
+        return value;
+    }
+}
+//# sourceMappingURL=candid-core.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/candid-ui.js":
+/*!****************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/candid-ui.js ***!
+  \****************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Render: () => (/* binding */ Render),
+/* harmony export */   inputBox: () => (/* binding */ inputBox),
+/* harmony export */   optForm: () => (/* binding */ optForm),
+/* harmony export */   recordForm: () => (/* binding */ recordForm),
+/* harmony export */   renderInput: () => (/* binding */ renderInput),
+/* harmony export */   renderValue: () => (/* binding */ renderValue),
+/* harmony export */   tupleForm: () => (/* binding */ tupleForm),
+/* harmony export */   variantForm: () => (/* binding */ variantForm),
+/* harmony export */   vecForm: () => (/* binding */ vecForm)
+/* harmony export */ });
+/* harmony import */ var _idl__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./idl */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/idl.js");
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _candid_core__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./candid-core */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/candid-core.js");
+
+
+
+const InputConfig = { parse: parsePrimitive };
+const FormConfig = { render: renderInput };
+const inputBox = (t, config) => {
+    return new _candid_core__WEBPACK_IMPORTED_MODULE_2__.InputBox(t, Object.assign(Object.assign({}, InputConfig), config));
+};
+const recordForm = (fields, config) => {
+    return new _candid_core__WEBPACK_IMPORTED_MODULE_2__.RecordForm(fields, Object.assign(Object.assign({}, FormConfig), config));
+};
+const tupleForm = (components, config) => {
+    return new _candid_core__WEBPACK_IMPORTED_MODULE_2__.TupleForm(components, Object.assign(Object.assign({}, FormConfig), config));
+};
+const variantForm = (fields, config) => {
+    return new _candid_core__WEBPACK_IMPORTED_MODULE_2__.VariantForm(fields, Object.assign(Object.assign({}, FormConfig), config));
+};
+const optForm = (ty, config) => {
+    return new _candid_core__WEBPACK_IMPORTED_MODULE_2__.OptionForm(ty, Object.assign(Object.assign({}, FormConfig), config));
+};
+const vecForm = (ty, config) => {
+    return new _candid_core__WEBPACK_IMPORTED_MODULE_2__.VecForm(ty, Object.assign(Object.assign({}, FormConfig), config));
+};
+class Render extends _idl__WEBPACK_IMPORTED_MODULE_0__.Visitor {
+    visitType(t, d) {
+        const input = document.createElement('input');
+        input.classList.add('argument');
+        input.placeholder = t.display();
+        return inputBox(t, { input });
+    }
+    visitNull(t, d) {
+        return inputBox(t, {});
+    }
+    visitRecord(t, fields, d) {
+        let config = {};
+        if (fields.length > 1) {
+            const container = document.createElement('div');
+            container.classList.add('popup-form');
+            config = { container };
+        }
+        const form = recordForm(fields, config);
+        return inputBox(t, { form });
+    }
+    visitTuple(t, components, d) {
+        let config = {};
+        if (components.length > 1) {
+            const container = document.createElement('div');
+            container.classList.add('popup-form');
+            config = { container };
+        }
+        const form = tupleForm(components, config);
+        return inputBox(t, { form });
+    }
+    visitVariant(t, fields, d) {
+        const select = document.createElement('select');
+        for (const [key, type] of fields) {
+            const option = new Option(key);
+            select.add(option);
+        }
+        select.selectedIndex = -1;
+        select.classList.add('open');
+        const config = { open: select, event: 'change' };
+        const form = variantForm(fields, config);
+        return inputBox(t, { form });
+    }
+    visitOpt(t, ty, d) {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.classList.add('open');
+        const form = optForm(ty, { open: checkbox, event: 'change' });
+        return inputBox(t, { form });
+    }
+    visitVec(t, ty, d) {
+        const len = document.createElement('input');
+        len.type = 'number';
+        len.min = '0';
+        len.max = '100';
+        len.style.width = '8rem';
+        len.placeholder = 'len';
+        len.classList.add('open');
+        const container = document.createElement('div');
+        container.classList.add('popup-form');
+        const form = vecForm(ty, { open: len, event: 'change', container });
+        return inputBox(t, { form });
+    }
+    visitRec(t, ty, d) {
+        return renderInput(ty);
+    }
+}
+class Parse extends _idl__WEBPACK_IMPORTED_MODULE_0__.Visitor {
+    visitNull(t, v) {
+        return null;
+    }
+    visitBool(t, v) {
+        if (v === 'true') {
+            return true;
+        }
+        if (v === 'false') {
+            return false;
+        }
+        throw new Error(`Cannot parse ${v} as boolean`);
+    }
+    visitText(t, v) {
+        return v;
+    }
+    visitFloat(t, v) {
+        return parseFloat(v);
+    }
+    visitFixedInt(t, v) {
+        if (t._bits <= 32) {
+            return parseInt(v, 10);
+        }
+        else {
+            return BigInt(v);
+        }
+    }
+    visitFixedNat(t, v) {
+        if (t._bits <= 32) {
+            return parseInt(v, 10);
+        }
+        else {
+            return BigInt(v);
+        }
+    }
+    visitNumber(t, v) {
+        return BigInt(v);
+    }
+    visitPrincipal(t, v) {
+        return _dfinity_principal__WEBPACK_IMPORTED_MODULE_1__.Principal.fromText(v);
+    }
+    visitService(t, v) {
+        return _dfinity_principal__WEBPACK_IMPORTED_MODULE_1__.Principal.fromText(v);
+    }
+    visitFunc(t, v) {
+        const x = v.split('.', 2);
+        return [_dfinity_principal__WEBPACK_IMPORTED_MODULE_1__.Principal.fromText(x[0]), x[1]];
+    }
+}
+class Random extends _idl__WEBPACK_IMPORTED_MODULE_0__.Visitor {
+    visitNull(t, v) {
+        return null;
+    }
+    visitBool(t, v) {
+        return Math.random() < 0.5;
+    }
+    visitText(t, v) {
+        return Math.random().toString(36).substring(6);
+    }
+    visitFloat(t, v) {
+        return Math.random();
+    }
+    visitInt(t, v) {
+        return BigInt(this.generateNumber(true));
+    }
+    visitNat(t, v) {
+        return BigInt(this.generateNumber(false));
+    }
+    visitFixedInt(t, v) {
+        const x = this.generateNumber(true);
+        if (t._bits <= 32) {
+            return x;
+        }
+        else {
+            return BigInt(v);
+        }
+    }
+    visitFixedNat(t, v) {
+        const x = this.generateNumber(false);
+        if (t._bits <= 32) {
+            return x;
+        }
+        else {
+            return BigInt(v);
+        }
+    }
+    generateNumber(signed) {
+        const num = Math.floor(Math.random() * 100);
+        if (signed && Math.random() < 0.5) {
+            return -num;
+        }
+        else {
+            return num;
+        }
+    }
+}
+function parsePrimitive(t, config, d) {
+    if (config.random && d === '') {
+        return t.accept(new Random(), d);
+    }
+    else {
+        return t.accept(new Parse(), d);
+    }
+}
+/**
+ *
+ * @param t an IDL type
+ * @returns an input for that type
+ */
+function renderInput(t) {
+    return t.accept(new Render(), null);
+}
+/**
+ *
+ * @param t an IDL Type
+ * @param input an InputBox
+ * @param value any
+ * @returns rendering that value to the provided input
+ */
+function renderValue(t, input, value) {
+    return t.accept(new RenderValue(), { input, value });
+}
+class RenderValue extends _idl__WEBPACK_IMPORTED_MODULE_0__.Visitor {
+    visitType(t, d) {
+        d.input.ui.input.value = t.valueToString(d.value);
+    }
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    visitNull(t, d) { }
+    visitText(t, d) {
+        d.input.ui.input.value = d.value;
+    }
+    visitRec(t, ty, d) {
+        renderValue(ty, d.input, d.value);
+    }
+    visitOpt(t, ty, d) {
+        if (d.value.length === 0) {
+            return;
+        }
+        else {
+            const form = d.input.ui.form;
+            const open = form.ui.open;
+            open.checked = true;
+            open.dispatchEvent(new Event(form.ui.event));
+            renderValue(ty, form.form[0], d.value[0]);
+        }
+    }
+    visitRecord(t, fields, d) {
+        const form = d.input.ui.form;
+        fields.forEach(([key, type], i) => {
+            renderValue(type, form.form[i], d.value[key]);
+        });
+    }
+    visitTuple(t, components, d) {
+        const form = d.input.ui.form;
+        components.forEach((type, i) => {
+            renderValue(type, form.form[i], d.value[i]);
+        });
+    }
+    visitVariant(t, fields, d) {
+        const form = d.input.ui.form;
+        const selected = Object.entries(d.value)[0];
+        fields.forEach(([key, type], i) => {
+            if (key === selected[0]) {
+                const open = form.ui.open;
+                open.selectedIndex = i;
+                open.dispatchEvent(new Event(form.ui.event));
+                renderValue(type, form.form[0], selected[1]);
+            }
+        });
+    }
+    visitVec(t, ty, d) {
+        const form = d.input.ui.form;
+        const len = d.value.length;
+        const open = form.ui.open;
+        open.value = len;
+        open.dispatchEvent(new Event(form.ui.event));
+        d.value.forEach((v, i) => {
+            renderValue(ty, form.form[i], v);
+        });
+    }
+}
+//# sourceMappingURL=candid-ui.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/idl.js":
+/*!**********************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/idl.js ***!
+  \**********************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Bool: () => (/* binding */ Bool),
+/* harmony export */   BoolClass: () => (/* binding */ BoolClass),
+/* harmony export */   ConstructType: () => (/* binding */ ConstructType),
+/* harmony export */   Empty: () => (/* binding */ Empty),
+/* harmony export */   EmptyClass: () => (/* binding */ EmptyClass),
+/* harmony export */   FixedIntClass: () => (/* binding */ FixedIntClass),
+/* harmony export */   FixedNatClass: () => (/* binding */ FixedNatClass),
+/* harmony export */   Float32: () => (/* binding */ Float32),
+/* harmony export */   Float64: () => (/* binding */ Float64),
+/* harmony export */   FloatClass: () => (/* binding */ FloatClass),
+/* harmony export */   Func: () => (/* binding */ Func),
+/* harmony export */   FuncClass: () => (/* binding */ FuncClass),
+/* harmony export */   Int: () => (/* binding */ Int),
+/* harmony export */   Int16: () => (/* binding */ Int16),
+/* harmony export */   Int32: () => (/* binding */ Int32),
+/* harmony export */   Int64: () => (/* binding */ Int64),
+/* harmony export */   Int8: () => (/* binding */ Int8),
+/* harmony export */   IntClass: () => (/* binding */ IntClass),
+/* harmony export */   Nat: () => (/* binding */ Nat),
+/* harmony export */   Nat16: () => (/* binding */ Nat16),
+/* harmony export */   Nat32: () => (/* binding */ Nat32),
+/* harmony export */   Nat64: () => (/* binding */ Nat64),
+/* harmony export */   Nat8: () => (/* binding */ Nat8),
+/* harmony export */   NatClass: () => (/* binding */ NatClass),
+/* harmony export */   Null: () => (/* binding */ Null),
+/* harmony export */   NullClass: () => (/* binding */ NullClass),
+/* harmony export */   Opt: () => (/* binding */ Opt),
+/* harmony export */   OptClass: () => (/* binding */ OptClass),
+/* harmony export */   PrimitiveType: () => (/* binding */ PrimitiveType),
+/* harmony export */   Principal: () => (/* binding */ Principal),
+/* harmony export */   PrincipalClass: () => (/* binding */ PrincipalClass),
+/* harmony export */   Rec: () => (/* binding */ Rec),
+/* harmony export */   RecClass: () => (/* binding */ RecClass),
+/* harmony export */   Record: () => (/* binding */ Record),
+/* harmony export */   RecordClass: () => (/* binding */ RecordClass),
+/* harmony export */   Reserved: () => (/* binding */ Reserved),
+/* harmony export */   ReservedClass: () => (/* binding */ ReservedClass),
+/* harmony export */   Service: () => (/* binding */ Service),
+/* harmony export */   ServiceClass: () => (/* binding */ ServiceClass),
+/* harmony export */   Text: () => (/* binding */ Text),
+/* harmony export */   TextClass: () => (/* binding */ TextClass),
+/* harmony export */   Tuple: () => (/* binding */ Tuple),
+/* harmony export */   TupleClass: () => (/* binding */ TupleClass),
+/* harmony export */   Type: () => (/* binding */ Type),
+/* harmony export */   Unknown: () => (/* binding */ Unknown),
+/* harmony export */   UnknownClass: () => (/* binding */ UnknownClass),
+/* harmony export */   Variant: () => (/* binding */ Variant),
+/* harmony export */   VariantClass: () => (/* binding */ VariantClass),
+/* harmony export */   Vec: () => (/* binding */ Vec),
+/* harmony export */   VecClass: () => (/* binding */ VecClass),
+/* harmony export */   Visitor: () => (/* binding */ Visitor),
+/* harmony export */   decode: () => (/* binding */ decode),
+/* harmony export */   encode: () => (/* binding */ encode)
+/* harmony export */ });
+/* harmony import */ var _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @dfinity/principal */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/buffer.js");
+/* harmony import */ var _utils_hash__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./utils/hash */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/hash.js");
+/* harmony import */ var _utils_leb128__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./utils/leb128 */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/leb128.js");
+/* harmony import */ var _utils_bigint_math__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./utils/bigint-math */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/bigint-math.js");
+// tslint:disable:max-classes-per-file
+
+
+
+
+
+const magicNumber = 'DIDL';
+const toReadableString_max = 400; // will not display arguments after 400chars. Makes sure 2mb blobs don't get inside the error
+function zipWith(xs, ys, f) {
+    return xs.map((x, i) => f(x, ys[i]));
+}
+/**
+ * An IDL Type Table, which precedes the data in the stream.
+ */
+class TypeTable {
+    constructor() {
+        // List of types. Needs to be an array as the index needs to be stable.
+        this._typs = [];
+        this._idx = new Map();
+    }
+    has(obj) {
+        return this._idx.has(obj.name);
+    }
+    add(type, buf) {
+        const idx = this._typs.length;
+        this._idx.set(type.name, idx);
+        this._typs.push(buf);
+    }
+    merge(obj, knot) {
+        const idx = this._idx.get(obj.name);
+        const knotIdx = this._idx.get(knot);
+        if (idx === undefined) {
+            throw new Error('Missing type index for ' + obj);
+        }
+        if (knotIdx === undefined) {
+            throw new Error('Missing type index for ' + knot);
+        }
+        this._typs[idx] = this._typs[knotIdx];
+        // Delete the type.
+        this._typs.splice(knotIdx, 1);
+        this._idx.delete(knot);
+    }
+    encode() {
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(this._typs.length);
+        const buf = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...this._typs);
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(len, buf);
+    }
+    indexOf(typeName) {
+        if (!this._idx.has(typeName)) {
+            throw new Error('Missing type index for ' + typeName);
+        }
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(this._idx.get(typeName) || 0);
+    }
+}
+class Visitor {
+    visitType(t, data) {
+        throw new Error('Not implemented');
+    }
+    visitPrimitive(t, data) {
+        return this.visitType(t, data);
+    }
+    visitEmpty(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitBool(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitNull(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitReserved(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitText(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitNumber(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitInt(t, data) {
+        return this.visitNumber(t, data);
+    }
+    visitNat(t, data) {
+        return this.visitNumber(t, data);
+    }
+    visitFloat(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitFixedInt(t, data) {
+        return this.visitNumber(t, data);
+    }
+    visitFixedNat(t, data) {
+        return this.visitNumber(t, data);
+    }
+    visitPrincipal(t, data) {
+        return this.visitPrimitive(t, data);
+    }
+    visitConstruct(t, data) {
+        return this.visitType(t, data);
+    }
+    visitVec(t, ty, data) {
+        return this.visitConstruct(t, data);
+    }
+    visitOpt(t, ty, data) {
+        return this.visitConstruct(t, data);
+    }
+    visitRecord(t, fields, data) {
+        return this.visitConstruct(t, data);
+    }
+    visitTuple(t, components, data) {
+        const fields = components.map((ty, i) => [`_${i}_`, ty]);
+        return this.visitRecord(t, fields, data);
+    }
+    visitVariant(t, fields, data) {
+        return this.visitConstruct(t, data);
+    }
+    visitRec(t, ty, data) {
+        return this.visitConstruct(ty, data);
+    }
+    visitFunc(t, data) {
+        return this.visitConstruct(t, data);
+    }
+    visitService(t, data) {
+        return this.visitConstruct(t, data);
+    }
+}
+/**
+ * Represents an IDL type.
+ */
+class Type {
+    /* Display type name */
+    display() {
+        return this.name;
+    }
+    valueToString(x) {
+        return toReadableString(x);
+    }
+    /* Implement `T` in the IDL spec, only needed for non-primitive types */
+    buildTypeTable(typeTable) {
+        if (!typeTable.has(this)) {
+            this._buildTypeTableImpl(typeTable);
+        }
+    }
+}
+class PrimitiveType extends Type {
+    checkType(t) {
+        if (this.name !== t.name) {
+            throw new Error(`type mismatch: type on the wire ${t.name}, expect type ${this.name}`);
+        }
+        return t;
+    }
+    _buildTypeTableImpl(typeTable) {
+        // No type table encoding for Primitive types.
+        return;
+    }
+}
+class ConstructType extends Type {
+    checkType(t) {
+        if (t instanceof RecClass) {
+            const ty = t.getType();
+            if (typeof ty === 'undefined') {
+                throw new Error('type mismatch with uninitialized type');
+            }
+            return ty;
+        }
+        throw new Error(`type mismatch: type on the wire ${t.name}, expect type ${this.name}`);
+    }
+    encodeType(typeTable) {
+        return typeTable.indexOf(this.name);
+    }
+}
+/**
+ * Represents an IDL Empty, a type which has no inhabitants.
+ * Since no values exist for this type, it cannot be serialised or deserialised.
+ * Result types like `Result<Text, Empty>` should always succeed.
+ */
+class EmptyClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitEmpty(this, d);
+    }
+    covariant(x) {
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue() {
+        throw new Error('Empty cannot appear as a function argument');
+    }
+    valueToString() {
+        throw new Error('Empty cannot appear as a value');
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-17 /* IDLTypeIds.Empty */);
+    }
+    decodeValue() {
+        throw new Error('Empty cannot appear as an output');
+    }
+    get name() {
+        return 'empty';
+    }
+}
+/**
+ * Represents an IDL Unknown, a placeholder type for deserialization only.
+ * When decoding a value as Unknown, all fields will be retained but the names are only available in
+ * hashed form.
+ * A deserialized unknown will offer it's actual type by calling the `type()` function.
+ * Unknown cannot be serialized and attempting to do so will throw an error.
+ */
+class UnknownClass extends Type {
+    checkType(t) {
+        throw new Error('Method not implemented for unknown.');
+    }
+    accept(v, d) {
+        throw v.visitType(this, d);
+    }
+    covariant(x) {
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue() {
+        throw new Error('Unknown cannot appear as a function argument');
+    }
+    valueToString() {
+        throw new Error('Unknown cannot appear as a value');
+    }
+    encodeType() {
+        throw new Error('Unknown cannot be serialized');
+    }
+    decodeValue(b, t) {
+        let decodedValue = t.decodeValue(b, t);
+        if (Object(decodedValue) !== decodedValue) {
+            // decodedValue is primitive. Box it, otherwise we cannot add the type() function.
+            // The type() function is important for primitives because otherwise we cannot tell apart the
+            // different number types.
+            decodedValue = Object(decodedValue);
+        }
+        let typeFunc;
+        if (t instanceof RecClass) {
+            typeFunc = () => t.getType();
+        }
+        else {
+            typeFunc = () => t;
+        }
+        // Do not use 'decodedValue.type = typeFunc' because this would lead to an enumerable property
+        // 'type' which means it would be serialized if the value would be candid encoded again.
+        // This in turn leads to problems if the decoded value is a variant because these values are
+        // only allowed to have a single property.
+        Object.defineProperty(decodedValue, 'type', {
+            value: typeFunc,
+            writable: true,
+            enumerable: false,
+            configurable: true,
+        });
+        return decodedValue;
+    }
+    _buildTypeTableImpl() {
+        throw new Error('Unknown cannot be serialized');
+    }
+    get name() {
+        return 'Unknown';
+    }
+}
+/**
+ * Represents an IDL Bool
+ */
+class BoolClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitBool(this, d);
+    }
+    covariant(x) {
+        if (typeof x === 'boolean')
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        return new Uint8Array([x ? 1 : 0]);
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-2 /* IDLTypeIds.Bool */);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        switch ((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeReadUint8)(b)) {
+            case 0:
+                return false;
+            case 1:
+                return true;
+            default:
+                throw new Error('Boolean value out of range');
+        }
+    }
+    get name() {
+        return 'bool';
+    }
+}
+/**
+ * Represents an IDL Null
+ */
+class NullClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitNull(this, d);
+    }
+    covariant(x) {
+        if (x === null)
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue() {
+        return new ArrayBuffer(0);
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-1 /* IDLTypeIds.Null */);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        return null;
+    }
+    get name() {
+        return 'null';
+    }
+}
+/**
+ * Represents an IDL Reserved
+ */
+class ReservedClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitReserved(this, d);
+    }
+    covariant(x) {
+        return true;
+    }
+    encodeValue() {
+        return new ArrayBuffer(0);
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-16 /* IDLTypeIds.Reserved */);
+    }
+    decodeValue(b, t) {
+        if (t.name !== this.name) {
+            t.decodeValue(b, t);
+        }
+        return null;
+    }
+    get name() {
+        return 'reserved';
+    }
+}
+/**
+ * Represents an IDL Text
+ */
+class TextClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitText(this, d);
+    }
+    covariant(x) {
+        if (typeof x === 'string')
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        const buf = new TextEncoder().encode(x);
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(buf.byteLength);
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(len, buf);
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-15 /* IDLTypeIds.Text */);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(b);
+        const buf = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeRead)(b, Number(len));
+        const decoder = new TextDecoder('utf8', { fatal: true });
+        return decoder.decode(buf);
+    }
+    get name() {
+        return 'text';
+    }
+    valueToString(x) {
+        return '"' + x + '"';
+    }
+}
+/**
+ * Represents an IDL Int
+ */
+class IntClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitInt(this, d);
+    }
+    covariant(x) {
+        // We allow encoding of JavaScript plain numbers.
+        // But we will always decode to bigint.
+        if (typeof x === 'bigint' || Number.isInteger(x))
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(x);
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-4 /* IDLTypeIds.Int */);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(b);
+    }
+    get name() {
+        return 'int';
+    }
+    valueToString(x) {
+        return x.toString();
+    }
+}
+/**
+ * Represents an IDL Nat
+ */
+class NatClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitNat(this, d);
+    }
+    covariant(x) {
+        // We allow encoding of JavaScript plain numbers.
+        // But we will always decode to bigint.
+        if ((typeof x === 'bigint' && x >= BigInt(0)) || (Number.isInteger(x) && x >= 0))
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(x);
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-3 /* IDLTypeIds.Nat */);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(b);
+    }
+    get name() {
+        return 'nat';
+    }
+    valueToString(x) {
+        return x.toString();
+    }
+}
+/**
+ * Represents an IDL Float
+ */
+class FloatClass extends PrimitiveType {
+    constructor(_bits) {
+        super();
+        this._bits = _bits;
+        if (_bits !== 32 && _bits !== 64) {
+            throw new Error('not a valid float type');
+        }
+    }
+    accept(v, d) {
+        return v.visitFloat(this, d);
+    }
+    covariant(x) {
+        if (typeof x === 'number' || x instanceof Number)
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        const buf = new ArrayBuffer(this._bits / 8);
+        const view = new DataView(buf);
+        if (this._bits === 32) {
+            view.setFloat32(0, x, true);
+        }
+        else {
+            view.setFloat64(0, x, true);
+        }
+        return buf;
+    }
+    encodeType() {
+        const opcode = this._bits === 32 ? -13 /* IDLTypeIds.Float32 */ : -14 /* IDLTypeIds.Float64 */;
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(opcode);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        const bytes = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeRead)(b, this._bits / 8);
+        const view = new DataView(bytes);
+        if (this._bits === 32) {
+            return view.getFloat32(0, true);
+        }
+        else {
+            return view.getFloat64(0, true);
+        }
+    }
+    get name() {
+        return 'float' + this._bits;
+    }
+    valueToString(x) {
+        return x.toString();
+    }
+}
+/**
+ * Represents an IDL fixed-width Int(n)
+ */
+class FixedIntClass extends PrimitiveType {
+    constructor(_bits) {
+        super();
+        this._bits = _bits;
+    }
+    accept(v, d) {
+        return v.visitFixedInt(this, d);
+    }
+    covariant(x) {
+        const min = (0,_utils_bigint_math__WEBPACK_IMPORTED_MODULE_4__.iexp2)(this._bits - 1) * BigInt(-1);
+        const max = (0,_utils_bigint_math__WEBPACK_IMPORTED_MODULE_4__.iexp2)(this._bits - 1) - BigInt(1);
+        let ok = false;
+        if (typeof x === 'bigint') {
+            ok = x >= min && x <= max;
+        }
+        else if (Number.isInteger(x)) {
+            const v = BigInt(x);
+            ok = v >= min && v <= max;
+        }
+        else {
+            ok = false;
+        }
+        if (ok)
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.writeIntLE)(x, this._bits / 8);
+    }
+    encodeType() {
+        const offset = Math.log2(this._bits) - 3;
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-9 - offset);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        const num = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.readIntLE)(b, this._bits / 8);
+        if (this._bits <= 32) {
+            return Number(num);
+        }
+        else {
+            return num;
+        }
+    }
+    get name() {
+        return `int${this._bits}`;
+    }
+    valueToString(x) {
+        return x.toString();
+    }
+}
+/**
+ * Represents an IDL fixed-width Nat(n)
+ */
+class FixedNatClass extends PrimitiveType {
+    constructor(_bits) {
+        super();
+        this._bits = _bits;
+    }
+    accept(v, d) {
+        return v.visitFixedNat(this, d);
+    }
+    covariant(x) {
+        const max = (0,_utils_bigint_math__WEBPACK_IMPORTED_MODULE_4__.iexp2)(this._bits);
+        let ok = false;
+        if (typeof x === 'bigint' && x >= BigInt(0)) {
+            ok = x < max;
+        }
+        else if (Number.isInteger(x) && x >= 0) {
+            const v = BigInt(x);
+            ok = v < max;
+        }
+        else {
+            ok = false;
+        }
+        if (ok)
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.writeUIntLE)(x, this._bits / 8);
+    }
+    encodeType() {
+        const offset = Math.log2(this._bits) - 3;
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-5 - offset);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        const num = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.readUIntLE)(b, this._bits / 8);
+        if (this._bits <= 32) {
+            return Number(num);
+        }
+        else {
+            return num;
+        }
+    }
+    get name() {
+        return `nat${this._bits}`;
+    }
+    valueToString(x) {
+        return x.toString();
+    }
+}
+/**
+ * Represents an IDL Array
+ *
+ * Arrays of fixed-sized nat/int type (e.g. nat8), are encoded from and decoded to TypedArrays (e.g. Uint8Array).
+ * Arrays of float or other non-primitive types are encoded/decoded as untyped array in Javascript.
+ *
+ * @param {Type} t
+ */
+class VecClass extends ConstructType {
+    constructor(_type) {
+        super();
+        this._type = _type;
+        // If true, this vector is really a blob and we can just use memcpy.
+        //
+        // NOTE:
+        // With support of encoding/dencoding of TypedArrays, this optimization is
+        // only used when plain array of bytes are passed as encoding input in order
+        // to be backward compatible.
+        this._blobOptimization = false;
+        if (_type instanceof FixedNatClass && _type._bits === 8) {
+            this._blobOptimization = true;
+        }
+    }
+    accept(v, d) {
+        return v.visitVec(this, this._type, d);
+    }
+    covariant(x) {
+        // Special case for ArrayBuffer
+        const bits = this._type instanceof FixedNatClass
+            ? this._type._bits
+            : this._type instanceof FixedIntClass
+                ? this._type._bits
+                : 0;
+        if ((ArrayBuffer.isView(x) && bits == x.BYTES_PER_ELEMENT * 8) ||
+            (Array.isArray(x) &&
+                x.every((v, idx) => {
+                    try {
+                        return this._type.covariant(v);
+                    }
+                    catch (e) {
+                        throw new Error(`Invalid ${this.display()} argument: \n\nindex ${idx} -> ${e.message}`);
+                    }
+                })))
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(x.length);
+        if (this._blobOptimization) {
+            return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(len, new Uint8Array(x));
+        }
+        if (ArrayBuffer.isView(x)) {
+            return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(len, new Uint8Array(x.buffer));
+        }
+        const buf = new _utils_buffer__WEBPACK_IMPORTED_MODULE_1__.PipeArrayBuffer(new ArrayBuffer(len.byteLength + x.length), 0);
+        buf.write(len);
+        for (const d of x) {
+            const encoded = this._type.encodeValue(d);
+            buf.write(new Uint8Array(encoded));
+        }
+        return buf.buffer;
+    }
+    _buildTypeTableImpl(typeTable) {
+        this._type.buildTypeTable(typeTable);
+        const opCode = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-19 /* IDLTypeIds.Vector */);
+        const buffer = this._type.encodeType(typeTable);
+        typeTable.add(this, (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(opCode, buffer));
+    }
+    decodeValue(b, t) {
+        const vec = this.checkType(t);
+        if (!(vec instanceof VecClass)) {
+            throw new Error('Not a vector type');
+        }
+        const len = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(b));
+        if (this._type instanceof FixedNatClass) {
+            if (this._type._bits == 8) {
+                return new Uint8Array(b.read(len));
+            }
+            if (this._type._bits == 16) {
+                return new Uint16Array(b.read(len * 2));
+            }
+            if (this._type._bits == 32) {
+                return new Uint32Array(b.read(len * 4));
+            }
+            if (this._type._bits == 64) {
+                return new BigUint64Array(b.read(len * 8));
+            }
+        }
+        if (this._type instanceof FixedIntClass) {
+            if (this._type._bits == 8) {
+                return new Int8Array(b.read(len));
+            }
+            if (this._type._bits == 16) {
+                return new Int16Array(b.read(len * 2));
+            }
+            if (this._type._bits == 32) {
+                return new Int32Array(b.read(len * 4));
+            }
+            if (this._type._bits == 64) {
+                return new BigInt64Array(b.read(len * 8));
+            }
+        }
+        const rets = [];
+        for (let i = 0; i < len; i++) {
+            rets.push(this._type.decodeValue(b, vec._type));
+        }
+        return rets;
+    }
+    get name() {
+        return `vec ${this._type.name}`;
+    }
+    display() {
+        return `vec ${this._type.display()}`;
+    }
+    valueToString(x) {
+        const elements = x.map(e => this._type.valueToString(e));
+        return 'vec {' + elements.join('; ') + '}';
+    }
+}
+/**
+ * Represents an IDL Option
+ * @param {Type} t
+ */
+class OptClass extends ConstructType {
+    constructor(_type) {
+        super();
+        this._type = _type;
+    }
+    accept(v, d) {
+        return v.visitOpt(this, this._type, d);
+    }
+    covariant(x) {
+        try {
+            if (Array.isArray(x) && (x.length === 0 || (x.length === 1 && this._type.covariant(x[0]))))
+                return true;
+        }
+        catch (e) {
+            throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)} \n\n-> ${e.message}`);
+        }
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        if (x.length === 0) {
+            return new Uint8Array([0]);
+        }
+        else {
+            return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(new Uint8Array([1]), this._type.encodeValue(x[0]));
+        }
+    }
+    _buildTypeTableImpl(typeTable) {
+        this._type.buildTypeTable(typeTable);
+        const opCode = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-18 /* IDLTypeIds.Opt */);
+        const buffer = this._type.encodeType(typeTable);
+        typeTable.add(this, (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(opCode, buffer));
+    }
+    decodeValue(b, t) {
+        const opt = this.checkType(t);
+        if (!(opt instanceof OptClass)) {
+            throw new Error('Not an option type');
+        }
+        switch ((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeReadUint8)(b)) {
+            case 0:
+                return [];
+            case 1:
+                return [this._type.decodeValue(b, opt._type)];
+            default:
+                throw new Error('Not an option value');
+        }
+    }
+    get name() {
+        return `opt ${this._type.name}`;
+    }
+    display() {
+        return `opt ${this._type.display()}`;
+    }
+    valueToString(x) {
+        if (x.length === 0) {
+            return 'null';
+        }
+        else {
+            return `opt ${this._type.valueToString(x[0])}`;
+        }
+    }
+}
+/**
+ * Represents an IDL Record
+ * @param {Object} [fields] - mapping of function name to Type
+ */
+class RecordClass extends ConstructType {
+    constructor(fields = {}) {
+        super();
+        this._fields = Object.entries(fields).sort((a, b) => (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(a[0]) - (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(b[0]));
+    }
+    accept(v, d) {
+        return v.visitRecord(this, this._fields, d);
+    }
+    tryAsTuple() {
+        const res = [];
+        for (let i = 0; i < this._fields.length; i++) {
+            const [key, type] = this._fields[i];
+            if (key !== `_${i}_`) {
+                return null;
+            }
+            res.push(type);
+        }
+        return res;
+    }
+    covariant(x) {
+        if (typeof x === 'object' &&
+            this._fields.every(([k, t]) => {
+                // eslint-disable-next-line
+                if (!x.hasOwnProperty(k)) {
+                    throw new Error(`Record is missing key "${k}".`);
+                }
+                try {
+                    return t.covariant(x[k]);
+                }
+                catch (e) {
+                    throw new Error(`Invalid ${this.display()} argument: \n\nfield ${k} -> ${e.message}`);
+                }
+            }))
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        const values = this._fields.map(([key]) => x[key]);
+        const bufs = zipWith(this._fields, values, ([, c], d) => c.encodeValue(d));
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...bufs);
+    }
+    _buildTypeTableImpl(T) {
+        this._fields.forEach(([_, value]) => value.buildTypeTable(T));
+        const opCode = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-20 /* IDLTypeIds.Record */);
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(this._fields.length);
+        const fields = this._fields.map(([key, value]) => (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)((0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(key)), value.encodeType(T)));
+        T.add(this, (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(opCode, len, (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...fields)));
+    }
+    decodeValue(b, t) {
+        const record = this.checkType(t);
+        if (!(record instanceof RecordClass)) {
+            throw new Error('Not a record type');
+        }
+        const x = {};
+        let expectedRecordIdx = 0;
+        let actualRecordIdx = 0;
+        while (actualRecordIdx < record._fields.length) {
+            const [hash, type] = record._fields[actualRecordIdx];
+            if (expectedRecordIdx >= this._fields.length) {
+                // skip unexpected left over fields present on the wire
+                type.decodeValue(b, type);
+                actualRecordIdx++;
+                continue;
+            }
+            const [expectKey, expectType] = this._fields[expectedRecordIdx];
+            const expectedId = (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(this._fields[expectedRecordIdx][0]);
+            const actualId = (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(hash);
+            if (expectedId === actualId) {
+                // the current field on the wire matches the expected field
+                x[expectKey] = expectType.decodeValue(b, type);
+                expectedRecordIdx++;
+                actualRecordIdx++;
+            }
+            else if (actualId > expectedId) {
+                // The expected field does not exist on the wire
+                if (expectType instanceof OptClass || expectType instanceof ReservedClass) {
+                    x[expectKey] = [];
+                    expectedRecordIdx++;
+                }
+                else {
+                    throw new Error('Cannot find required field ' + expectKey);
+                }
+            }
+            else {
+                // The field on the wire does not exist in the output type, so we can skip it
+                type.decodeValue(b, type);
+                actualRecordIdx++;
+            }
+        }
+        // initialize left over expected optional fields
+        for (const [expectKey, expectType] of this._fields.slice(expectedRecordIdx)) {
+            if (expectType instanceof OptClass || expectType instanceof ReservedClass) {
+                // TODO this assumes null value in opt is represented as []
+                x[expectKey] = [];
+            }
+            else {
+                throw new Error('Cannot find required field ' + expectKey);
+            }
+        }
+        return x;
+    }
+    get name() {
+        const fields = this._fields.map(([key, value]) => key + ':' + value.name);
+        return `record {${fields.join('; ')}}`;
+    }
+    display() {
+        const fields = this._fields.map(([key, value]) => key + ':' + value.display());
+        return `record {${fields.join('; ')}}`;
+    }
+    valueToString(x) {
+        const values = this._fields.map(([key]) => x[key]);
+        const fields = zipWith(this._fields, values, ([k, c], d) => k + '=' + c.valueToString(d));
+        return `record {${fields.join('; ')}}`;
+    }
+}
+/**
+ * Represents Tuple, a syntactic sugar for Record.
+ * @param {Type} components
+ */
+class TupleClass extends RecordClass {
+    constructor(_components) {
+        const x = {};
+        _components.forEach((e, i) => (x['_' + i + '_'] = e));
+        super(x);
+        this._components = _components;
+    }
+    accept(v, d) {
+        return v.visitTuple(this, this._components, d);
+    }
+    covariant(x) {
+        // `>=` because tuples can be covariant when encoded.
+        if (Array.isArray(x) &&
+            x.length >= this._fields.length &&
+            this._components.every((t, i) => {
+                try {
+                    return t.covariant(x[i]);
+                }
+                catch (e) {
+                    throw new Error(`Invalid ${this.display()} argument: \n\nindex ${i} -> ${e.message}`);
+                }
+            }))
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        const bufs = zipWith(this._components, x, (c, d) => c.encodeValue(d));
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...bufs);
+    }
+    decodeValue(b, t) {
+        const tuple = this.checkType(t);
+        if (!(tuple instanceof TupleClass)) {
+            throw new Error('not a tuple type');
+        }
+        if (tuple._components.length < this._components.length) {
+            throw new Error('tuple mismatch');
+        }
+        const res = [];
+        for (const [i, wireType] of tuple._components.entries()) {
+            if (i >= this._components.length) {
+                // skip value
+                wireType.decodeValue(b, wireType);
+            }
+            else {
+                res.push(this._components[i].decodeValue(b, wireType));
+            }
+        }
+        return res;
+    }
+    display() {
+        const fields = this._components.map(value => value.display());
+        return `record {${fields.join('; ')}}`;
+    }
+    valueToString(values) {
+        const fields = zipWith(this._components, values, (c, d) => c.valueToString(d));
+        return `record {${fields.join('; ')}}`;
+    }
+}
+/**
+ * Represents an IDL Variant
+ * @param {Object} [fields] - mapping of function name to Type
+ */
+class VariantClass extends ConstructType {
+    constructor(fields = {}) {
+        super();
+        this._fields = Object.entries(fields).sort((a, b) => (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(a[0]) - (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(b[0]));
+    }
+    accept(v, d) {
+        return v.visitVariant(this, this._fields, d);
+    }
+    covariant(x) {
+        if (typeof x === 'object' &&
+            Object.entries(x).length === 1 &&
+            this._fields.every(([k, v]) => {
+                try {
+                    // eslint-disable-next-line
+                    return !x.hasOwnProperty(k) || v.covariant(x[k]);
+                }
+                catch (e) {
+                    throw new Error(`Invalid ${this.display()} argument: \n\nvariant ${k} -> ${e.message}`);
+                }
+            }))
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        for (let i = 0; i < this._fields.length; i++) {
+            const [name, type] = this._fields[i];
+            // eslint-disable-next-line
+            if (x.hasOwnProperty(name)) {
+                const idx = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(i);
+                const buf = type.encodeValue(x[name]);
+                return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(idx, buf);
+            }
+        }
+        throw Error('Variant has no data: ' + x);
+    }
+    _buildTypeTableImpl(typeTable) {
+        this._fields.forEach(([, type]) => {
+            type.buildTypeTable(typeTable);
+        });
+        const opCode = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-21 /* IDLTypeIds.Variant */);
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(this._fields.length);
+        const fields = this._fields.map(([key, value]) => (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)((0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(key)), value.encodeType(typeTable)));
+        typeTable.add(this, (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(opCode, len, ...fields));
+    }
+    decodeValue(b, t) {
+        const variant = this.checkType(t);
+        if (!(variant instanceof VariantClass)) {
+            throw new Error('Not a variant type');
+        }
+        const idx = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(b));
+        if (idx >= variant._fields.length) {
+            throw Error('Invalid variant index: ' + idx);
+        }
+        const [wireHash, wireType] = variant._fields[idx];
+        for (const [key, expectType] of this._fields) {
+            if ((0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(wireHash) === (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(key)) {
+                const value = expectType.decodeValue(b, wireType);
+                return { [key]: value };
+            }
+        }
+        throw new Error('Cannot find field hash ' + wireHash);
+    }
+    get name() {
+        const fields = this._fields.map(([key, type]) => key + ':' + type.name);
+        return `variant {${fields.join('; ')}}`;
+    }
+    display() {
+        const fields = this._fields.map(([key, type]) => key + (type.name === 'null' ? '' : `:${type.display()}`));
+        return `variant {${fields.join('; ')}}`;
+    }
+    valueToString(x) {
+        for (const [name, type] of this._fields) {
+            // eslint-disable-next-line
+            if (x.hasOwnProperty(name)) {
+                const value = type.valueToString(x[name]);
+                if (value === 'null') {
+                    return `variant {${name}}`;
+                }
+                else {
+                    return `variant {${name}=${value}}`;
+                }
+            }
+        }
+        throw new Error('Variant has no data: ' + x);
+    }
+}
+/**
+ * Represents a reference to an IDL type, used for defining recursive data
+ * types.
+ */
+class RecClass extends ConstructType {
+    constructor() {
+        super(...arguments);
+        this._id = RecClass._counter++;
+        this._type = undefined;
+    }
+    accept(v, d) {
+        if (!this._type) {
+            throw Error('Recursive type uninitialized.');
+        }
+        return v.visitRec(this, this._type, d);
+    }
+    fill(t) {
+        this._type = t;
+    }
+    getType() {
+        return this._type;
+    }
+    covariant(x) {
+        if (this._type ? this._type.covariant(x) : false)
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        if (!this._type) {
+            throw Error('Recursive type uninitialized.');
+        }
+        return this._type.encodeValue(x);
+    }
+    _buildTypeTableImpl(typeTable) {
+        if (!this._type) {
+            throw Error('Recursive type uninitialized.');
+        }
+        typeTable.add(this, new Uint8Array([]));
+        this._type.buildTypeTable(typeTable);
+        typeTable.merge(this, this._type.name);
+    }
+    decodeValue(b, t) {
+        if (!this._type) {
+            throw Error('Recursive type uninitialized.');
+        }
+        return this._type.decodeValue(b, t);
+    }
+    get name() {
+        return `rec_${this._id}`;
+    }
+    display() {
+        if (!this._type) {
+            throw Error('Recursive type uninitialized.');
+        }
+        return `μ${this.name}.${this._type.name}`;
+    }
+    valueToString(x) {
+        if (!this._type) {
+            throw Error('Recursive type uninitialized.');
+        }
+        return this._type.valueToString(x);
+    }
+}
+RecClass._counter = 0;
+function decodePrincipalId(b) {
+    const x = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeReadUint8)(b);
+    if (x !== 1) {
+        throw new Error('Cannot decode principal');
+    }
+    const len = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(b));
+    return _dfinity_principal__WEBPACK_IMPORTED_MODULE_0__.Principal.fromUint8Array(new Uint8Array((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeRead)(b, len)));
+}
+/**
+ * Represents an IDL principal reference
+ */
+class PrincipalClass extends PrimitiveType {
+    accept(v, d) {
+        return v.visitPrincipal(this, d);
+    }
+    covariant(x) {
+        if (x && x._isPrincipal)
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        const buf = x.toUint8Array();
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(buf.byteLength);
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(new Uint8Array([1]), len, buf);
+    }
+    encodeType() {
+        return (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-24 /* IDLTypeIds.Principal */);
+    }
+    decodeValue(b, t) {
+        this.checkType(t);
+        return decodePrincipalId(b);
+    }
+    get name() {
+        return 'principal';
+    }
+    valueToString(x) {
+        return `${this.name} "${x.toText()}"`;
+    }
+}
+/**
+ * Represents an IDL function reference.
+ * @param argTypes Argument types.
+ * @param retTypes Return types.
+ * @param annotations Function annotations.
+ */
+class FuncClass extends ConstructType {
+    constructor(argTypes, retTypes, annotations = []) {
+        super();
+        this.argTypes = argTypes;
+        this.retTypes = retTypes;
+        this.annotations = annotations;
+    }
+    static argsToString(types, v) {
+        if (types.length !== v.length) {
+            throw new Error('arity mismatch');
+        }
+        return '(' + types.map((t, i) => t.valueToString(v[i])).join(', ') + ')';
+    }
+    accept(v, d) {
+        return v.visitFunc(this, d);
+    }
+    covariant(x) {
+        if (Array.isArray(x) && x.length === 2 && x[0] && x[0]._isPrincipal && typeof x[1] === 'string')
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue([principal, methodName]) {
+        const buf = principal.toUint8Array();
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(buf.byteLength);
+        const canister = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(new Uint8Array([1]), len, buf);
+        const method = new TextEncoder().encode(methodName);
+        const methodLen = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(method.byteLength);
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(new Uint8Array([1]), canister, methodLen, method);
+    }
+    _buildTypeTableImpl(T) {
+        this.argTypes.forEach(arg => arg.buildTypeTable(T));
+        this.retTypes.forEach(arg => arg.buildTypeTable(T));
+        const opCode = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-22 /* IDLTypeIds.Func */);
+        const argLen = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(this.argTypes.length);
+        const args = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...this.argTypes.map(arg => arg.encodeType(T)));
+        const retLen = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(this.retTypes.length);
+        const rets = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...this.retTypes.map(arg => arg.encodeType(T)));
+        const annLen = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(this.annotations.length);
+        const anns = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...this.annotations.map(a => this.encodeAnnotation(a)));
+        T.add(this, (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(opCode, argLen, args, retLen, rets, annLen, anns));
+    }
+    decodeValue(b) {
+        const x = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeReadUint8)(b);
+        if (x !== 1) {
+            throw new Error('Cannot decode function reference');
+        }
+        const canister = decodePrincipalId(b);
+        const mLen = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(b));
+        const buf = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeRead)(b, mLen);
+        const decoder = new TextDecoder('utf8', { fatal: true });
+        const method = decoder.decode(buf);
+        return [canister, method];
+    }
+    get name() {
+        const args = this.argTypes.map(arg => arg.name).join(', ');
+        const rets = this.retTypes.map(arg => arg.name).join(', ');
+        const annon = ' ' + this.annotations.join(' ');
+        return `(${args}) -> (${rets})${annon}`;
+    }
+    valueToString([principal, str]) {
+        return `func "${principal.toText()}".${str}`;
+    }
+    display() {
+        const args = this.argTypes.map(arg => arg.display()).join(', ');
+        const rets = this.retTypes.map(arg => arg.display()).join(', ');
+        const annon = ' ' + this.annotations.join(' ');
+        return `(${args}) → (${rets})${annon}`;
+    }
+    encodeAnnotation(ann) {
+        if (ann === 'query') {
+            return new Uint8Array([1]);
+        }
+        else if (ann === 'oneway') {
+            return new Uint8Array([2]);
+        }
+        else {
+            throw new Error('Illegal function annotation');
+        }
+    }
+}
+class ServiceClass extends ConstructType {
+    constructor(fields) {
+        super();
+        this._fields = Object.entries(fields).sort((a, b) => (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(a[0]) - (0,_utils_hash__WEBPACK_IMPORTED_MODULE_2__.idlLabelToId)(b[0]));
+    }
+    accept(v, d) {
+        return v.visitService(this, d);
+    }
+    covariant(x) {
+        if (x && x._isPrincipal)
+            return true;
+        throw new Error(`Invalid ${this.display()} argument: ${toReadableString(x)}`);
+    }
+    encodeValue(x) {
+        const buf = x.toUint8Array();
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(buf.length);
+        return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(new Uint8Array([1]), len, buf);
+    }
+    _buildTypeTableImpl(T) {
+        this._fields.forEach(([_, func]) => func.buildTypeTable(T));
+        const opCode = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebEncode)(-23 /* IDLTypeIds.Service */);
+        const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(this._fields.length);
+        const meths = this._fields.map(([label, func]) => {
+            const labelBuf = new TextEncoder().encode(label);
+            const labelLen = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(labelBuf.length);
+            return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(labelLen, labelBuf, func.encodeType(T));
+        });
+        T.add(this, (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(opCode, len, ...meths));
+    }
+    decodeValue(b) {
+        return decodePrincipalId(b);
+    }
+    get name() {
+        const fields = this._fields.map(([key, value]) => key + ':' + value.name);
+        return `service {${fields.join('; ')}}`;
+    }
+    valueToString(x) {
+        return `service "${x.toText()}"`;
+    }
+}
+/**
+ *
+ * @param x
+ * @returns {string}
+ */
+function toReadableString(x) {
+    const str = JSON.stringify(x, (_key, value) => typeof value === 'bigint' ? `BigInt(${value})` : value);
+    return str && str.length > toReadableString_max
+        ? str.substring(0, toReadableString_max - 3) + '...'
+        : str;
+}
+/**
+ * Encode a array of values
+ * @param argTypes
+ * @param args
+ * @returns {Buffer} serialised value
+ */
+function encode(argTypes, args) {
+    if (args.length < argTypes.length) {
+        throw Error('Wrong number of message arguments');
+    }
+    const typeTable = new TypeTable();
+    argTypes.forEach(t => t.buildTypeTable(typeTable));
+    const magic = new TextEncoder().encode(magicNumber);
+    const table = typeTable.encode();
+    const len = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebEncode)(args.length);
+    const typs = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...argTypes.map(t => t.encodeType(typeTable)));
+    const vals = (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(...zipWith(argTypes, args, (t, x) => {
+        try {
+            t.covariant(x);
+        }
+        catch (e) {
+            const err = new Error(e.message + '\n\n');
+            throw err;
+        }
+        return t.encodeValue(x);
+    }));
+    return (0,_utils_buffer__WEBPACK_IMPORTED_MODULE_1__.concat)(magic, table, len, typs, vals);
+}
+/**
+ * Decode a binary value
+ * @param retTypes - Types expected in the buffer.
+ * @param bytes - hex-encoded string, or buffer.
+ * @returns Value deserialised to JS type
+ */
+function decode(retTypes, bytes) {
+    const b = new _utils_buffer__WEBPACK_IMPORTED_MODULE_1__.PipeArrayBuffer(bytes);
+    if (bytes.byteLength < magicNumber.length) {
+        throw new Error('Message length smaller than magic number');
+    }
+    const magicBuffer = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeRead)(b, magicNumber.length);
+    const magic = new TextDecoder().decode(magicBuffer);
+    if (magic !== magicNumber) {
+        throw new Error('Wrong magic number: ' + JSON.stringify(magic));
+    }
+    function readTypeTable(pipe) {
+        const typeTable = [];
+        const len = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+        for (let i = 0; i < len; i++) {
+            const ty = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(pipe));
+            switch (ty) {
+                case -18 /* IDLTypeIds.Opt */:
+                case -19 /* IDLTypeIds.Vector */: {
+                    const t = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(pipe));
+                    typeTable.push([ty, t]);
+                    break;
+                }
+                case -20 /* IDLTypeIds.Record */:
+                case -21 /* IDLTypeIds.Variant */: {
+                    const fields = [];
+                    let objectLength = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                    let prevHash;
+                    while (objectLength--) {
+                        const hash = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                        if (hash >= Math.pow(2, 32)) {
+                            throw new Error('field id out of 32-bit range');
+                        }
+                        if (typeof prevHash === 'number' && prevHash >= hash) {
+                            throw new Error('field id collision or not sorted');
+                        }
+                        prevHash = hash;
+                        const t = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(pipe));
+                        fields.push([hash, t]);
+                    }
+                    typeTable.push([ty, fields]);
+                    break;
+                }
+                case -22 /* IDLTypeIds.Func */: {
+                    const args = [];
+                    let argLength = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                    while (argLength--) {
+                        args.push(Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(pipe)));
+                    }
+                    const returnValues = [];
+                    let returnValuesLength = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                    while (returnValuesLength--) {
+                        returnValues.push(Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(pipe)));
+                    }
+                    const annotations = [];
+                    let annotationLength = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                    while (annotationLength--) {
+                        const annotation = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                        switch (annotation) {
+                            case 1: {
+                                annotations.push('query');
+                                break;
+                            }
+                            case 2: {
+                                annotations.push('oneway');
+                                break;
+                            }
+                            default:
+                                throw new Error('unknown annotation');
+                        }
+                    }
+                    typeTable.push([ty, [args, returnValues, annotations]]);
+                    break;
+                }
+                case -23 /* IDLTypeIds.Service */: {
+                    let servLength = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                    const methods = [];
+                    while (servLength--) {
+                        const nameLength = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+                        const funcName = new TextDecoder().decode((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.safeRead)(pipe, nameLength));
+                        const funcType = (0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(pipe);
+                        methods.push([funcName, funcType]);
+                    }
+                    typeTable.push([ty, methods]);
+                    break;
+                }
+                default:
+                    throw new Error('Illegal op_code: ' + ty);
+            }
+        }
+        const rawList = [];
+        const length = Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.lebDecode)(pipe));
+        for (let i = 0; i < length; i++) {
+            rawList.push(Number((0,_utils_leb128__WEBPACK_IMPORTED_MODULE_3__.slebDecode)(pipe)));
+        }
+        return [typeTable, rawList];
+    }
+    const [rawTable, rawTypes] = readTypeTable(b);
+    if (rawTypes.length < retTypes.length) {
+        throw new Error('Wrong number of return values');
+    }
+    const table = rawTable.map(_ => Rec());
+    function getType(t) {
+        if (t < -24) {
+            throw new Error('future value not supported');
+        }
+        if (t < 0) {
+            switch (t) {
+                case -1:
+                    return Null;
+                case -2:
+                    return Bool;
+                case -3:
+                    return Nat;
+                case -4:
+                    return Int;
+                case -5:
+                    return Nat8;
+                case -6:
+                    return Nat16;
+                case -7:
+                    return Nat32;
+                case -8:
+                    return Nat64;
+                case -9:
+                    return Int8;
+                case -10:
+                    return Int16;
+                case -11:
+                    return Int32;
+                case -12:
+                    return Int64;
+                case -13:
+                    return Float32;
+                case -14:
+                    return Float64;
+                case -15:
+                    return Text;
+                case -16:
+                    return Reserved;
+                case -17:
+                    return Empty;
+                case -24:
+                    return Principal;
+                default:
+                    throw new Error('Illegal op_code: ' + t);
+            }
+        }
+        if (t >= rawTable.length) {
+            throw new Error('type index out of range');
+        }
+        return table[t];
+    }
+    function buildType(entry) {
+        switch (entry[0]) {
+            case -19 /* IDLTypeIds.Vector */: {
+                const ty = getType(entry[1]);
+                return Vec(ty);
+            }
+            case -18 /* IDLTypeIds.Opt */: {
+                const ty = getType(entry[1]);
+                return Opt(ty);
+            }
+            case -20 /* IDLTypeIds.Record */: {
+                const fields = {};
+                for (const [hash, ty] of entry[1]) {
+                    const name = `_${hash}_`;
+                    fields[name] = getType(ty);
+                }
+                const record = Record(fields);
+                const tuple = record.tryAsTuple();
+                if (Array.isArray(tuple)) {
+                    return Tuple(...tuple);
+                }
+                else {
+                    return record;
+                }
+            }
+            case -21 /* IDLTypeIds.Variant */: {
+                const fields = {};
+                for (const [hash, ty] of entry[1]) {
+                    const name = `_${hash}_`;
+                    fields[name] = getType(ty);
+                }
+                return Variant(fields);
+            }
+            case -22 /* IDLTypeIds.Func */: {
+                const [args, returnValues, annotations] = entry[1];
+                return Func(args.map((t) => getType(t)), returnValues.map((t) => getType(t)), annotations);
+            }
+            case -23 /* IDLTypeIds.Service */: {
+                const rec = {};
+                const methods = entry[1];
+                for (const [name, typeRef] of methods) {
+                    let type = getType(typeRef);
+                    if (type instanceof RecClass) {
+                        // unpack reference type
+                        type = type.getType();
+                    }
+                    if (!(type instanceof FuncClass)) {
+                        throw new Error('Illegal service definition: services can only contain functions');
+                    }
+                    rec[name] = type;
+                }
+                return Service(rec);
+            }
+            default:
+                throw new Error('Illegal op_code: ' + entry[0]);
+        }
+    }
+    rawTable.forEach((entry, i) => {
+        const t = buildType(entry);
+        table[i].fill(t);
+    });
+    const types = rawTypes.map(t => getType(t));
+    const output = retTypes.map((t, i) => {
+        return t.decodeValue(b, types[i]);
+    });
+    // skip unused values
+    for (let ind = retTypes.length; ind < types.length; ind++) {
+        types[ind].decodeValue(b, types[ind]);
+    }
+    if (b.byteLength > 0) {
+        throw new Error('decode: Left-over bytes');
+    }
+    return output;
+}
+// Export Types instances.
+const Empty = new EmptyClass();
+const Reserved = new ReservedClass();
+/**
+ * Client-only type for deserializing unknown data. Not supported by Candid, and its use is discouraged.
+ */
+const Unknown = new UnknownClass();
+const Bool = new BoolClass();
+const Null = new NullClass();
+const Text = new TextClass();
+const Int = new IntClass();
+const Nat = new NatClass();
+const Float32 = new FloatClass(32);
+const Float64 = new FloatClass(64);
+const Int8 = new FixedIntClass(8);
+const Int16 = new FixedIntClass(16);
+const Int32 = new FixedIntClass(32);
+const Int64 = new FixedIntClass(64);
+const Nat8 = new FixedNatClass(8);
+const Nat16 = new FixedNatClass(16);
+const Nat32 = new FixedNatClass(32);
+const Nat64 = new FixedNatClass(64);
+const Principal = new PrincipalClass();
+/**
+ *
+ * @param types array of any types
+ * @returns TupleClass from those types
+ */
+function Tuple(...types) {
+    return new TupleClass(types);
+}
+/**
+ *
+ * @param t IDL Type
+ * @returns VecClass from that type
+ */
+function Vec(t) {
+    return new VecClass(t);
+}
+/**
+ *
+ * @param t IDL Type
+ * @returns OptClass of Type
+ */
+function Opt(t) {
+    return new OptClass(t);
+}
+/**
+ *
+ * @param t Record of string and IDL Type
+ * @returns RecordClass of string and Type
+ */
+function Record(t) {
+    return new RecordClass(t);
+}
+/**
+ *
+ * @param fields Record of string and IDL Type
+ * @returns VariantClass
+ */
+function Variant(fields) {
+    return new VariantClass(fields);
+}
+/**
+ *
+ * @returns new RecClass
+ */
+function Rec() {
+    return new RecClass();
+}
+/**
+ *
+ * @param args array of IDL Types
+ * @param ret array of IDL Types
+ * @param annotations array of strings, [] by default
+ * @returns new FuncClass
+ */
+function Func(args, ret, annotations = []) {
+    return new FuncClass(args, ret, annotations);
+}
+/**
+ *
+ * @param t Record of string and FuncClass
+ * @returns ServiceClass
+ */
+function Service(t) {
+    return new ServiceClass(t);
+}
+//# sourceMappingURL=idl.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/index.js":
+/*!************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/index.js ***!
+  \************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   IDL: () => (/* reexport module object */ _idl__WEBPACK_IMPORTED_MODULE_2__),
+/* harmony export */   InputBox: () => (/* reexport safe */ _candid_core__WEBPACK_IMPORTED_MODULE_1__.InputBox),
+/* harmony export */   InputForm: () => (/* reexport safe */ _candid_core__WEBPACK_IMPORTED_MODULE_1__.InputForm),
+/* harmony export */   OptionForm: () => (/* reexport safe */ _candid_core__WEBPACK_IMPORTED_MODULE_1__.OptionForm),
+/* harmony export */   PipeArrayBuffer: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_5__.PipeArrayBuffer),
+/* harmony export */   RecordForm: () => (/* reexport safe */ _candid_core__WEBPACK_IMPORTED_MODULE_1__.RecordForm),
+/* harmony export */   Render: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.Render),
+/* harmony export */   TupleForm: () => (/* reexport safe */ _candid_core__WEBPACK_IMPORTED_MODULE_1__.TupleForm),
+/* harmony export */   VariantForm: () => (/* reexport safe */ _candid_core__WEBPACK_IMPORTED_MODULE_1__.VariantForm),
+/* harmony export */   VecForm: () => (/* reexport safe */ _candid_core__WEBPACK_IMPORTED_MODULE_1__.VecForm),
+/* harmony export */   concat: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_5__.concat),
+/* harmony export */   fromHexString: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_5__.fromHexString),
+/* harmony export */   idlLabelToId: () => (/* reexport safe */ _utils_hash__WEBPACK_IMPORTED_MODULE_3__.idlLabelToId),
+/* harmony export */   inputBox: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.inputBox),
+/* harmony export */   lebDecode: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.lebDecode),
+/* harmony export */   lebEncode: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.lebEncode),
+/* harmony export */   optForm: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.optForm),
+/* harmony export */   readIntLE: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.readIntLE),
+/* harmony export */   readUIntLE: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.readUIntLE),
+/* harmony export */   recordForm: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.recordForm),
+/* harmony export */   renderInput: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.renderInput),
+/* harmony export */   renderValue: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.renderValue),
+/* harmony export */   safeRead: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.safeRead),
+/* harmony export */   safeReadUint8: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.safeReadUint8),
+/* harmony export */   slebDecode: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.slebDecode),
+/* harmony export */   slebEncode: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.slebEncode),
+/* harmony export */   toHexString: () => (/* reexport safe */ _utils_buffer__WEBPACK_IMPORTED_MODULE_5__.toHexString),
+/* harmony export */   tupleForm: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.tupleForm),
+/* harmony export */   variantForm: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.variantForm),
+/* harmony export */   vecForm: () => (/* reexport safe */ _candid_ui__WEBPACK_IMPORTED_MODULE_0__.vecForm),
+/* harmony export */   writeIntLE: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.writeIntLE),
+/* harmony export */   writeUIntLE: () => (/* reexport safe */ _utils_leb128__WEBPACK_IMPORTED_MODULE_4__.writeUIntLE)
+/* harmony export */ });
+/* harmony import */ var _candid_ui__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./candid-ui */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/candid-ui.js");
+/* harmony import */ var _candid_core__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./candid-core */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/candid-core.js");
+/* harmony import */ var _idl__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./idl */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/idl.js");
+/* harmony import */ var _utils_hash__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./utils/hash */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/hash.js");
+/* harmony import */ var _utils_leb128__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./utils/leb128 */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/leb128.js");
+/* harmony import */ var _utils_buffer__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./utils/buffer */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/buffer.js");
+/* harmony import */ var _types__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ./types */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/types.js");
+
+
+
+
+
+
+
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/types.js":
+/*!************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/types.js ***!
+  \************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+
+//# sourceMappingURL=types.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/bigint-math.js":
+/*!************************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/bigint-math.js ***!
+  \************************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   iexp2: () => (/* binding */ iexp2),
+/* harmony export */   ilog2: () => (/* binding */ ilog2)
+/* harmony export */ });
+/**
+ * Equivalent to `Math.log2(n)` with support for `BigInt` values
+ *
+ * @param n bigint or integer
+ * @returns integer
+ */
+function ilog2(n) {
+    const nBig = BigInt(n);
+    if (n <= 0) {
+        throw new RangeError('Input must be positive');
+    }
+    return nBig.toString(2).length - 1;
+}
+/**
+ * Equivalent to `2 ** n` with support for `BigInt` values
+ * (necessary for browser preprocessors which replace the `**` operator with `Math.pow`)
+ *
+ * @param n bigint or integer
+ * @returns bigint
+ */
+function iexp2(n) {
+    const nBig = BigInt(n);
+    if (n < 0) {
+        throw new RangeError('Input must be non-negative');
+    }
+    return BigInt(1) << nBig;
+}
+//# sourceMappingURL=bigint-math.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/buffer.js":
+/*!*******************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/buffer.js ***!
+  \*******************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   PipeArrayBuffer: () => (/* binding */ PipeArrayBuffer),
+/* harmony export */   concat: () => (/* binding */ concat),
+/* harmony export */   fromHexString: () => (/* binding */ fromHexString),
+/* harmony export */   toHexString: () => (/* binding */ toHexString)
+/* harmony export */ });
+/**
+ * Concatenate multiple array buffers.
+ * @param buffers The buffers to concatenate.
+ */
+function concat(...buffers) {
+    const result = new Uint8Array(buffers.reduce((acc, curr) => acc + curr.byteLength, 0));
+    let index = 0;
+    for (const b of buffers) {
+        result.set(new Uint8Array(b), index);
+        index += b.byteLength;
+    }
+    return result;
+}
+/**
+ * Returns an hexadecimal representation of an array buffer.
+ * @param bytes The array buffer.
+ */
+function toHexString(bytes) {
+    return new Uint8Array(bytes).reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '');
+}
+/**
+ * Return an array buffer from its hexadecimal representation.
+ * @param hexString The hexadecimal string.
+ */
+function fromHexString(hexString) {
+    var _a;
+    return new Uint8Array(((_a = hexString.match(/.{1,2}/g)) !== null && _a !== void 0 ? _a : []).map(byte => parseInt(byte, 16)));
+}
+/**
+ * A class that abstracts a pipe-like ArrayBuffer.
+ */
+class PipeArrayBuffer {
+    /**
+     * Creates a new instance of a pipe
+     * @param buffer an optional buffer to start with
+     * @param length an optional amount of bytes to use for the length.
+     */
+    constructor(buffer, length = (buffer === null || buffer === void 0 ? void 0 : buffer.byteLength) || 0) {
+        this._buffer = buffer || new ArrayBuffer(0);
+        this._view = new Uint8Array(this._buffer, 0, length);
+    }
+    get buffer() {
+        // Return a copy of the buffer.
+        return this._view.slice();
+    }
+    get byteLength() {
+        return this._view.byteLength;
+    }
+    /**
+     * Read `num` number of bytes from the front of the pipe.
+     * @param num The number of bytes to read.
+     */
+    read(num) {
+        const result = this._view.subarray(0, num);
+        this._view = this._view.subarray(num);
+        return result.slice().buffer;
+    }
+    readUint8() {
+        const result = this._view[0];
+        this._view = this._view.subarray(1);
+        return result;
+    }
+    /**
+     * Write a buffer to the end of the pipe.
+     * @param buf The bytes to write.
+     */
+    write(buf) {
+        const b = new Uint8Array(buf);
+        const offset = this._view.byteLength;
+        if (this._view.byteOffset + this._view.byteLength + b.byteLength >= this._buffer.byteLength) {
+            // Alloc grow the view to include the new bytes.
+            this.alloc(b.byteLength);
+        }
+        else {
+            // Update the view to include the new bytes.
+            this._view = new Uint8Array(this._buffer, this._view.byteOffset, this._view.byteLength + b.byteLength);
+        }
+        this._view.set(b, offset);
+    }
+    /**
+     * Whether or not there is more data to read from the buffer
+     */
+    get end() {
+        return this._view.byteLength === 0;
+    }
+    /**
+     * Allocate a fixed amount of memory in the buffer. This does not affect the view.
+     * @param amount A number of bytes to add to the buffer.
+     */
+    alloc(amount) {
+        // Add a little bit of exponential growth.
+        // tslint:disable-next-line:no-bitwise
+        const b = new ArrayBuffer(((this._buffer.byteLength + amount) * 1.2) | 0);
+        const v = new Uint8Array(b, 0, this._view.byteLength + amount);
+        v.set(this._view);
+        this._buffer = b;
+        this._view = v;
+    }
+}
+//# sourceMappingURL=buffer.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/hash.js":
+/*!*****************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/hash.js ***!
+  \*****************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   idlLabelToId: () => (/* binding */ idlLabelToId)
+/* harmony export */ });
+/**
+ * Hashes a string to a number. Algorithm can be found here:
+ * https://caml.inria.fr/pub/papers/garrigue-polymorphic_variants-ml98.pdf
+ * @param s
+ */
+function idlHash(s) {
+    const utf8encoder = new TextEncoder();
+    const array = utf8encoder.encode(s);
+    let h = 0;
+    for (const c of array) {
+        h = (h * 223 + c) % 2 ** 32;
+    }
+    return h;
+}
+/**
+ *
+ * @param label string
+ * @returns number representing hashed label
+ */
+function idlLabelToId(label) {
+    if (/^_\d+_$/.test(label) || /^_0x[0-9a-fA-F]+_$/.test(label)) {
+        const num = +label.slice(1, -1);
+        if (Number.isSafeInteger(num) && num >= 0 && num < 2 ** 32) {
+            return num;
+        }
+    }
+    return idlHash(label);
+}
+//# sourceMappingURL=hash.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/leb128.js":
+/*!*******************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/leb128.js ***!
+  \*******************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   lebDecode: () => (/* binding */ lebDecode),
+/* harmony export */   lebEncode: () => (/* binding */ lebEncode),
+/* harmony export */   readIntLE: () => (/* binding */ readIntLE),
+/* harmony export */   readUIntLE: () => (/* binding */ readUIntLE),
+/* harmony export */   safeRead: () => (/* binding */ safeRead),
+/* harmony export */   safeReadUint8: () => (/* binding */ safeReadUint8),
+/* harmony export */   slebDecode: () => (/* binding */ slebDecode),
+/* harmony export */   slebEncode: () => (/* binding */ slebEncode),
+/* harmony export */   writeIntLE: () => (/* binding */ writeIntLE),
+/* harmony export */   writeUIntLE: () => (/* binding */ writeUIntLE)
+/* harmony export */ });
+/* harmony import */ var _buffer__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./buffer */ "./src/nft_frontend/node_modules/@dfinity/candid/lib/esm/utils/buffer.js");
+/* eslint-disable no-constant-condition */
+// tslint:disable:no-bitwise
+// Note: this file uses buffer-pipe, which on Node only, uses the Node Buffer
+//       implementation, which isn't compatible with the NPM buffer package
+//       which we use everywhere else. This means that we have to transform
+//       one into the other, hence why every function that returns a Buffer
+//       actually return `new Buffer(pipe.buffer)`.
+// TODO: The best solution would be to have our own buffer type around
+//       Uint8Array which is standard.
+
+function eob() {
+    throw new Error('unexpected end of buffer');
+}
+/**
+ *
+ * @param pipe Pipe from buffer-pipe
+ * @param num number
+ * @returns Buffer
+ */
+function safeRead(pipe, num) {
+    if (pipe.byteLength < num) {
+        eob();
+    }
+    return pipe.read(num);
+}
+/**
+ * @param pipe
+ */
+function safeReadUint8(pipe) {
+    const byte = pipe.readUint8();
+    if (byte === undefined) {
+        eob();
+    }
+    return byte;
+}
+/**
+ * Encode a positive number (or bigint) into a Buffer. The number will be floored to the
+ * nearest integer.
+ * @param value The number to encode.
+ */
+function lebEncode(value) {
+    if (typeof value === 'number') {
+        value = BigInt(value);
+    }
+    if (value < BigInt(0)) {
+        throw new Error('Cannot leb encode negative values.');
+    }
+    const byteLength = (value === BigInt(0) ? 0 : Math.ceil(Math.log2(Number(value)))) + 1;
+    const pipe = new _buffer__WEBPACK_IMPORTED_MODULE_0__.PipeArrayBuffer(new ArrayBuffer(byteLength), 0);
+    while (true) {
+        const i = Number(value & BigInt(0x7f));
+        value /= BigInt(0x80);
+        if (value === BigInt(0)) {
+            pipe.write(new Uint8Array([i]));
+            break;
+        }
+        else {
+            pipe.write(new Uint8Array([i | 0x80]));
+        }
+    }
+    return pipe.buffer;
+}
+/**
+ * Decode a leb encoded buffer into a bigint. The number will always be positive (does not
+ * support signed leb encoding).
+ * @param pipe A Buffer containing the leb encoded bits.
+ */
+function lebDecode(pipe) {
+    let weight = BigInt(1);
+    let value = BigInt(0);
+    let byte;
+    do {
+        byte = safeReadUint8(pipe);
+        value += BigInt(byte & 0x7f).valueOf() * weight;
+        weight *= BigInt(128);
+    } while (byte >= 0x80);
+    return value;
+}
+/**
+ * Encode a number (or bigint) into a Buffer, with support for negative numbers. The number
+ * will be floored to the nearest integer.
+ * @param value The number to encode.
+ */
+function slebEncode(value) {
+    if (typeof value === 'number') {
+        value = BigInt(value);
+    }
+    const isNeg = value < BigInt(0);
+    if (isNeg) {
+        value = -value - BigInt(1);
+    }
+    const byteLength = (value === BigInt(0) ? 0 : Math.ceil(Math.log2(Number(value)))) + 1;
+    const pipe = new _buffer__WEBPACK_IMPORTED_MODULE_0__.PipeArrayBuffer(new ArrayBuffer(byteLength), 0);
+    while (true) {
+        const i = getLowerBytes(value);
+        value /= BigInt(0x80);
+        // prettier-ignore
+        if ((isNeg && value === BigInt(0) && (i & 0x40) !== 0)
+            || (!isNeg && value === BigInt(0) && (i & 0x40) === 0)) {
+            pipe.write(new Uint8Array([i]));
+            break;
+        }
+        else {
+            pipe.write(new Uint8Array([i | 0x80]));
+        }
+    }
+    function getLowerBytes(num) {
+        const bytes = num % BigInt(0x80);
+        if (isNeg) {
+            // We swap the bits here again, and remove 1 to do two's complement.
+            return Number(BigInt(0x80) - bytes - BigInt(1));
+        }
+        else {
+            return Number(bytes);
+        }
+    }
+    return pipe.buffer;
+}
+/**
+ * Decode a leb encoded buffer into a bigint. The number is decoded with support for negative
+ * signed-leb encoding.
+ * @param pipe A Buffer containing the signed leb encoded bits.
+ */
+function slebDecode(pipe) {
+    // Get the size of the buffer, then cut a buffer of that size.
+    const pipeView = new Uint8Array(pipe.buffer);
+    let len = 0;
+    for (; len < pipeView.byteLength; len++) {
+        if (pipeView[len] < 0x80) {
+            // If it's a positive number, we reuse lebDecode.
+            if ((pipeView[len] & 0x40) === 0) {
+                return lebDecode(pipe);
+            }
+            break;
+        }
+    }
+    const bytes = new Uint8Array(safeRead(pipe, len + 1));
+    let value = BigInt(0);
+    for (let i = bytes.byteLength - 1; i >= 0; i--) {
+        value = value * BigInt(0x80) + BigInt(0x80 - (bytes[i] & 0x7f) - 1);
+    }
+    return -value - BigInt(1);
+}
+/**
+ *
+ * @param value bigint or number
+ * @param byteLength number
+ * @returns Buffer
+ */
+function writeUIntLE(value, byteLength) {
+    if (BigInt(value) < BigInt(0)) {
+        throw new Error('Cannot write negative values.');
+    }
+    return writeIntLE(value, byteLength);
+}
+/**
+ *
+ * @param value
+ * @param byteLength
+ */
+function writeIntLE(value, byteLength) {
+    value = BigInt(value);
+    const pipe = new _buffer__WEBPACK_IMPORTED_MODULE_0__.PipeArrayBuffer(new ArrayBuffer(Math.min(1, byteLength)), 0);
+    let i = 0;
+    let mul = BigInt(256);
+    let sub = BigInt(0);
+    let byte = Number(value % mul);
+    pipe.write(new Uint8Array([byte]));
+    while (++i < byteLength) {
+        if (value < 0 && sub === BigInt(0) && byte !== 0) {
+            sub = BigInt(1);
+        }
+        byte = Number((value / mul - sub) % BigInt(256));
+        pipe.write(new Uint8Array([byte]));
+        mul *= BigInt(256);
+    }
+    return pipe.buffer;
+}
+/**
+ *
+ * @param pipe Pipe from buffer-pipe
+ * @param byteLength number
+ * @returns bigint
+ */
+function readUIntLE(pipe, byteLength) {
+    let val = BigInt(safeReadUint8(pipe));
+    let mul = BigInt(1);
+    let i = 0;
+    while (++i < byteLength) {
+        mul *= BigInt(256);
+        const byte = BigInt(safeReadUint8(pipe));
+        val = val + mul * byte;
+    }
+    return val;
+}
+/**
+ *
+ * @param pipe Pipe from buffer-pipe
+ * @param byteLength number
+ * @returns bigint
+ */
+function readIntLE(pipe, byteLength) {
+    let val = readUIntLE(pipe, byteLength);
+    const mul = BigInt(2) ** (BigInt(8) * BigInt(byteLength - 1) + BigInt(7));
+    if (val >= mul) {
+        val -= mul * BigInt(2);
+    }
+    return val;
+}
+//# sourceMappingURL=leb128.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js":
+/*!***************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/index.js ***!
+  \***************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Principal: () => (/* binding */ Principal)
+/* harmony export */ });
+/* harmony import */ var _utils_base32__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./utils/base32 */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/base32.js");
+/* harmony import */ var _utils_getCrc__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./utils/getCrc */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/getCrc.js");
+/* harmony import */ var _utils_sha224__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./utils/sha224 */ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/sha224.js");
+
+
+
+const SELF_AUTHENTICATING_SUFFIX = 2;
+const ANONYMOUS_SUFFIX = 4;
+const MANAGEMENT_CANISTER_PRINCIPAL_HEX_STR = 'aaaaa-aa';
+const fromHexString = (hexString) => { var _a; return new Uint8Array(((_a = hexString.match(/.{1,2}/g)) !== null && _a !== void 0 ? _a : []).map(byte => parseInt(byte, 16))); };
+const toHexString = (bytes) => bytes.reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '');
+class Principal {
+    constructor(_arr) {
+        this._arr = _arr;
+        this._isPrincipal = true;
+    }
+    static anonymous() {
+        return new this(new Uint8Array([ANONYMOUS_SUFFIX]));
+    }
+    /**
+     * Utility method, returning the principal representing the management canister, decoded from the hex string `'aaaaa-aa'`
+     * @returns {Principal} principal of the management canister
+     */
+    static managementCanister() {
+        return this.fromHex(MANAGEMENT_CANISTER_PRINCIPAL_HEX_STR);
+    }
+    static selfAuthenticating(publicKey) {
+        const sha = (0,_utils_sha224__WEBPACK_IMPORTED_MODULE_2__.sha224)(publicKey);
+        return new this(new Uint8Array([...sha, SELF_AUTHENTICATING_SUFFIX]));
+    }
+    static from(other) {
+        if (typeof other === 'string') {
+            return Principal.fromText(other);
+        }
+        else if (typeof other === 'object' &&
+            other !== null &&
+            other._isPrincipal === true) {
+            return new Principal(other._arr);
+        }
+        throw new Error(`Impossible to convert ${JSON.stringify(other)} to Principal.`);
+    }
+    static fromHex(hex) {
+        return new this(fromHexString(hex));
+    }
+    static fromText(text) {
+        const canisterIdNoDash = text.toLowerCase().replace(/-/g, '');
+        let arr = (0,_utils_base32__WEBPACK_IMPORTED_MODULE_0__.decode)(canisterIdNoDash);
+        arr = arr.slice(4, arr.length);
+        const principal = new this(arr);
+        if (principal.toText() !== text) {
+            throw new Error(`Principal "${principal.toText()}" does not have a valid checksum (original value "${text}" may not be a valid Principal ID).`);
+        }
+        return principal;
+    }
+    static fromUint8Array(arr) {
+        return new this(arr);
+    }
+    isAnonymous() {
+        return this._arr.byteLength === 1 && this._arr[0] === ANONYMOUS_SUFFIX;
+    }
+    toUint8Array() {
+        return this._arr;
+    }
+    toHex() {
+        return toHexString(this._arr).toUpperCase();
+    }
+    toText() {
+        const checksumArrayBuf = new ArrayBuffer(4);
+        const view = new DataView(checksumArrayBuf);
+        view.setUint32(0, (0,_utils_getCrc__WEBPACK_IMPORTED_MODULE_1__.getCrc32)(this._arr));
+        const checksum = new Uint8Array(checksumArrayBuf);
+        const bytes = Uint8Array.from(this._arr);
+        const array = new Uint8Array([...checksum, ...bytes]);
+        const result = (0,_utils_base32__WEBPACK_IMPORTED_MODULE_0__.encode)(array);
+        const matches = result.match(/.{1,5}/g);
+        if (!matches) {
+            // This should only happen if there's no character, which is unreachable.
+            throw new Error();
+        }
+        return matches.join('-');
+    }
+    toString() {
+        return this.toText();
+    }
+    /**
+     * Utility method taking a Principal to compare against. Used for determining canister ranges in certificate verification
+     * @param {Principal} other - a {@link Principal} to compare
+     * @returns {'lt' | 'eq' | 'gt'} `'lt' | 'eq' | 'gt'` a string, representing less than, equal to, or greater than
+     */
+    compareTo(other) {
+        for (let i = 0; i < Math.min(this._arr.length, other._arr.length); i++) {
+            if (this._arr[i] < other._arr[i])
+                return 'lt';
+            else if (this._arr[i] > other._arr[i])
+                return 'gt';
+        }
+        // Here, at least one principal is a prefix of the other principal (they could be the same)
+        if (this._arr.length < other._arr.length)
+            return 'lt';
+        if (this._arr.length > other._arr.length)
+            return 'gt';
+        return 'eq';
+    }
+    /**
+     * Utility method checking whether a provided Principal is less than or equal to the current one using the {@link Principal.compareTo} method
+     * @param other a {@link Principal} to compare
+     * @returns {boolean} boolean
+     */
+    ltEq(other) {
+        const cmp = this.compareTo(other);
+        return cmp == 'lt' || cmp == 'eq';
+    }
+    /**
+     * Utility method checking whether a provided Principal is greater than or equal to the current one using the {@link Principal.compareTo} method
+     * @param other a {@link Principal} to compare
+     * @returns {boolean} boolean
+     */
+    gtEq(other) {
+        const cmp = this.compareTo(other);
+        return cmp == 'gt' || cmp == 'eq';
+    }
+}
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/base32.js":
+/*!**********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/base32.js ***!
+  \**********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   decode: () => (/* binding */ decode),
+/* harmony export */   encode: () => (/* binding */ encode)
+/* harmony export */ });
+// tslint:disable:no-bitwise
+const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+// Build a lookup table for decoding.
+const lookupTable = Object.create(null);
+for (let i = 0; i < alphabet.length; i++) {
+    lookupTable[alphabet[i]] = i;
+}
+// Add aliases for rfc4648.
+lookupTable['0'] = lookupTable.o;
+lookupTable['1'] = lookupTable.i;
+/**
+ * @param input The input array to encode.
+ * @returns A Base32 string encoding the input.
+ */
+function encode(input) {
+    // How many bits will we skip from the first byte.
+    let skip = 0;
+    // 5 high bits, carry from one byte to the next.
+    let bits = 0;
+    // The output string in base32.
+    let output = '';
+    function encodeByte(byte) {
+        if (skip < 0) {
+            // we have a carry from the previous byte
+            bits |= byte >> -skip;
+        }
+        else {
+            // no carry
+            bits = (byte << skip) & 248;
+        }
+        if (skip > 3) {
+            // Not enough data to produce a character, get us another one
+            skip -= 8;
+            return 1;
+        }
+        if (skip < 4) {
+            // produce a character
+            output += alphabet[bits >> 3];
+            skip += 5;
+        }
+        return 0;
+    }
+    for (let i = 0; i < input.length;) {
+        i += encodeByte(input[i]);
+    }
+    return output + (skip < 0 ? alphabet[bits >> 3] : '');
+}
+/**
+ * @param input The base32 encoded string to decode.
+ */
+function decode(input) {
+    // how many bits we have from the previous character.
+    let skip = 0;
+    // current byte we're producing.
+    let byte = 0;
+    const output = new Uint8Array(((input.length * 4) / 3) | 0);
+    let o = 0;
+    function decodeChar(char) {
+        // Consume a character from the stream, store
+        // the output in this.output. As before, better
+        // to use update().
+        let val = lookupTable[char.toLowerCase()];
+        if (val === undefined) {
+            throw new Error(`Invalid character: ${JSON.stringify(char)}`);
+        }
+        // move to the high bits
+        val <<= 3;
+        byte |= val >>> skip;
+        skip += 5;
+        if (skip >= 8) {
+            // We have enough bytes to produce an output
+            output[o++] = byte;
+            skip -= 8;
+            if (skip > 0) {
+                byte = (val << (5 - skip)) & 255;
+            }
+            else {
+                byte = 0;
+            }
+        }
+    }
+    for (const c of input) {
+        decodeChar(c);
+    }
+    return output.slice(0, o);
+}
+//# sourceMappingURL=base32.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/getCrc.js":
+/*!**********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/getCrc.js ***!
+  \**********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   getCrc32: () => (/* binding */ getCrc32)
+/* harmony export */ });
+// tslint:disable:no-bitwise
+// This file is translated to JavaScript from
+// https://lxp32.github.io/docs/a-simple-example-crc32-calculation/
+const lookUpTable = new Uint32Array([
+    0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f, 0xe963a535, 0x9e6495a3,
+    0x0edb8832, 0x79dcb8a4, 0xe0d5e91e, 0x97d2d988, 0x09b64c2b, 0x7eb17cbd, 0xe7b82d07, 0x90bf1d91,
+    0x1db71064, 0x6ab020f2, 0xf3b97148, 0x84be41de, 0x1adad47d, 0x6ddde4eb, 0xf4d4b551, 0x83d385c7,
+    0x136c9856, 0x646ba8c0, 0xfd62f97a, 0x8a65c9ec, 0x14015c4f, 0x63066cd9, 0xfa0f3d63, 0x8d080df5,
+    0x3b6e20c8, 0x4c69105e, 0xd56041e4, 0xa2677172, 0x3c03e4d1, 0x4b04d447, 0xd20d85fd, 0xa50ab56b,
+    0x35b5a8fa, 0x42b2986c, 0xdbbbc9d6, 0xacbcf940, 0x32d86ce3, 0x45df5c75, 0xdcd60dcf, 0xabd13d59,
+    0x26d930ac, 0x51de003a, 0xc8d75180, 0xbfd06116, 0x21b4f4b5, 0x56b3c423, 0xcfba9599, 0xb8bda50f,
+    0x2802b89e, 0x5f058808, 0xc60cd9b2, 0xb10be924, 0x2f6f7c87, 0x58684c11, 0xc1611dab, 0xb6662d3d,
+    0x76dc4190, 0x01db7106, 0x98d220bc, 0xefd5102a, 0x71b18589, 0x06b6b51f, 0x9fbfe4a5, 0xe8b8d433,
+    0x7807c9a2, 0x0f00f934, 0x9609a88e, 0xe10e9818, 0x7f6a0dbb, 0x086d3d2d, 0x91646c97, 0xe6635c01,
+    0x6b6b51f4, 0x1c6c6162, 0x856530d8, 0xf262004e, 0x6c0695ed, 0x1b01a57b, 0x8208f4c1, 0xf50fc457,
+    0x65b0d9c6, 0x12b7e950, 0x8bbeb8ea, 0xfcb9887c, 0x62dd1ddf, 0x15da2d49, 0x8cd37cf3, 0xfbd44c65,
+    0x4db26158, 0x3ab551ce, 0xa3bc0074, 0xd4bb30e2, 0x4adfa541, 0x3dd895d7, 0xa4d1c46d, 0xd3d6f4fb,
+    0x4369e96a, 0x346ed9fc, 0xad678846, 0xda60b8d0, 0x44042d73, 0x33031de5, 0xaa0a4c5f, 0xdd0d7cc9,
+    0x5005713c, 0x270241aa, 0xbe0b1010, 0xc90c2086, 0x5768b525, 0x206f85b3, 0xb966d409, 0xce61e49f,
+    0x5edef90e, 0x29d9c998, 0xb0d09822, 0xc7d7a8b4, 0x59b33d17, 0x2eb40d81, 0xb7bd5c3b, 0xc0ba6cad,
+    0xedb88320, 0x9abfb3b6, 0x03b6e20c, 0x74b1d29a, 0xead54739, 0x9dd277af, 0x04db2615, 0x73dc1683,
+    0xe3630b12, 0x94643b84, 0x0d6d6a3e, 0x7a6a5aa8, 0xe40ecf0b, 0x9309ff9d, 0x0a00ae27, 0x7d079eb1,
+    0xf00f9344, 0x8708a3d2, 0x1e01f268, 0x6906c2fe, 0xf762575d, 0x806567cb, 0x196c3671, 0x6e6b06e7,
+    0xfed41b76, 0x89d32be0, 0x10da7a5a, 0x67dd4acc, 0xf9b9df6f, 0x8ebeeff9, 0x17b7be43, 0x60b08ed5,
+    0xd6d6a3e8, 0xa1d1937e, 0x38d8c2c4, 0x4fdff252, 0xd1bb67f1, 0xa6bc5767, 0x3fb506dd, 0x48b2364b,
+    0xd80d2bda, 0xaf0a1b4c, 0x36034af6, 0x41047a60, 0xdf60efc3, 0xa867df55, 0x316e8eef, 0x4669be79,
+    0xcb61b38c, 0xbc66831a, 0x256fd2a0, 0x5268e236, 0xcc0c7795, 0xbb0b4703, 0x220216b9, 0x5505262f,
+    0xc5ba3bbe, 0xb2bd0b28, 0x2bb45a92, 0x5cb36a04, 0xc2d7ffa7, 0xb5d0cf31, 0x2cd99e8b, 0x5bdeae1d,
+    0x9b64c2b0, 0xec63f226, 0x756aa39c, 0x026d930a, 0x9c0906a9, 0xeb0e363f, 0x72076785, 0x05005713,
+    0x95bf4a82, 0xe2b87a14, 0x7bb12bae, 0x0cb61b38, 0x92d28e9b, 0xe5d5be0d, 0x7cdcefb7, 0x0bdbdf21,
+    0x86d3d2d4, 0xf1d4e242, 0x68ddb3f8, 0x1fda836e, 0x81be16cd, 0xf6b9265b, 0x6fb077e1, 0x18b74777,
+    0x88085ae6, 0xff0f6a70, 0x66063bca, 0x11010b5c, 0x8f659eff, 0xf862ae69, 0x616bffd3, 0x166ccf45,
+    0xa00ae278, 0xd70dd2ee, 0x4e048354, 0x3903b3c2, 0xa7672661, 0xd06016f7, 0x4969474d, 0x3e6e77db,
+    0xaed16a4a, 0xd9d65adc, 0x40df0b66, 0x37d83bf0, 0xa9bcae53, 0xdebb9ec5, 0x47b2cf7f, 0x30b5ffe9,
+    0xbdbdf21c, 0xcabac28a, 0x53b39330, 0x24b4a3a6, 0xbad03605, 0xcdd70693, 0x54de5729, 0x23d967bf,
+    0xb3667a2e, 0xc4614ab8, 0x5d681b02, 0x2a6f2b94, 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d,
+]);
+/**
+ * Calculate the CRC32 of an ArrayBufferLike.
+ * @param buf The BufferLike to calculate the CRC32 of.
+ */
+function getCrc32(buf) {
+    const b = new Uint8Array(buf);
+    let crc = -1;
+    // tslint:disable-next-line:prefer-for-of
+    for (let i = 0; i < b.length; i++) {
+        const byte = b[i];
+        const t = (byte ^ crc) & 0xff;
+        crc = lookUpTable[t] ^ (crc >>> 8);
+    }
+    return (crc ^ -1) >>> 0;
+}
+//# sourceMappingURL=getCrc.js.map
+
+/***/ }),
+
+/***/ "./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/sha224.js":
+/*!**********************************************************************************!*\
+  !*** ./src/nft_frontend/node_modules/@dfinity/principal/lib/esm/utils/sha224.js ***!
+  \**********************************************************************************/
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   sha224: () => (/* binding */ sha224)
+/* harmony export */ });
+/* harmony import */ var js_sha256__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! js-sha256 */ "./node_modules/js-sha256/src/sha256.js");
+/* harmony import */ var js_sha256__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(js_sha256__WEBPACK_IMPORTED_MODULE_0__);
+
+/**
+ * Returns the SHA224 hash of the buffer.
+ * @param data Arraybuffer to encode
+ */
+function sha224(data) {
+    const shaObj = js_sha256__WEBPACK_IMPORTED_MODULE_0__.sha224.create();
+    shaObj.update(data);
+    return new Uint8Array(shaObj.array());
+}
+//# sourceMappingURL=sha224.js.map
+
+/***/ }),
+
+/***/ "./node_modules/@noble/curves/esm/abstract/bls.js":
+/*!********************************************************!*\
+  !*** ./node_modules/@noble/curves/esm/abstract/bls.js ***!
+  \********************************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   bls: () => (/* binding */ bls)
+/* harmony export */ });
+/* harmony import */ var _modular_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./modular.js */ "./node_modules/@noble/curves/esm/abstract/modular.js");
+/* harmony import */ var _utils_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./utils.js */ "./node_modules/@noble/curves/esm/abstract/utils.js");
+/* harmony import */ var _hash_to_curve_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./hash-to-curve.js */ "./node_modules/@noble/curves/esm/abstract/hash-to-curve.js");
+/* harmony import */ var _weierstrass_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./weierstrass.js */ "./node_modules/@noble/curves/esm/abstract/weierstrass.js");
+
+
+// prettier-ignore
+
+
+// prettier-ignore
+const _2n = BigInt(2), _3n = BigInt(3);
+function bls(CURVE) {
+    // Fields are specific for curve, so for now we'll need to pass them with opts
+    const { Fp, Fr, Fp2, Fp6, Fp12 } = CURVE.fields;
+    const BLS_X_LEN = (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.bitLen)(CURVE.params.x);
+    // Pre-compute coefficients for sparse multiplication
+    // Point addition and point double calculations is reused for coefficients
+    function calcPairingPrecomputes(p) {
+        const { x, y } = p;
+        // prettier-ignore
+        const Qx = x, Qy = y, Qz = Fp2.ONE;
+        // prettier-ignore
+        let Rx = Qx, Ry = Qy, Rz = Qz;
+        let ell_coeff = [];
+        for (let i = BLS_X_LEN - 2; i >= 0; i--) {
+            // Double
+            let t0 = Fp2.sqr(Ry); // Ry²
+            let t1 = Fp2.sqr(Rz); // Rz²
+            let t2 = Fp2.multiplyByB(Fp2.mul(t1, _3n)); // 3 * T1 * B
+            let t3 = Fp2.mul(t2, _3n); // 3 * T2
+            let t4 = Fp2.sub(Fp2.sub(Fp2.sqr(Fp2.add(Ry, Rz)), t1), t0); // (Ry + Rz)² - T1 - T0
+            ell_coeff.push([
+                Fp2.sub(t2, t0), // T2 - T0
+                Fp2.mul(Fp2.sqr(Rx), _3n), // 3 * Rx²
+                Fp2.neg(t4), // -T4
+            ]);
+            Rx = Fp2.div(Fp2.mul(Fp2.mul(Fp2.sub(t0, t3), Rx), Ry), _2n); // ((T0 - T3) * Rx * Ry) / 2
+            Ry = Fp2.sub(Fp2.sqr(Fp2.div(Fp2.add(t0, t3), _2n)), Fp2.mul(Fp2.sqr(t2), _3n)); // ((T0 + T3) / 2)² - 3 * T2²
+            Rz = Fp2.mul(t0, t4); // T0 * T4
+            if ((0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.bitGet)(CURVE.params.x, i)) {
+                // Addition
+                let t0 = Fp2.sub(Ry, Fp2.mul(Qy, Rz)); // Ry - Qy * Rz
+                let t1 = Fp2.sub(Rx, Fp2.mul(Qx, Rz)); // Rx - Qx * Rz
+                ell_coeff.push([
+                    Fp2.sub(Fp2.mul(t0, Qx), Fp2.mul(t1, Qy)), // T0 * Qx - T1 * Qy
+                    Fp2.neg(t0), // -T0
+                    t1, // T1
+                ]);
+                let t2 = Fp2.sqr(t1); // T1²
+                let t3 = Fp2.mul(t2, t1); // T2 * T1
+                let t4 = Fp2.mul(t2, Rx); // T2 * Rx
+                let t5 = Fp2.add(Fp2.sub(t3, Fp2.mul(t4, _2n)), Fp2.mul(Fp2.sqr(t0), Rz)); // T3 - 2 * T4 + T0² * Rz
+                Rx = Fp2.mul(t1, t5); // T1 * T5
+                Ry = Fp2.sub(Fp2.mul(Fp2.sub(t4, t5), t0), Fp2.mul(t3, Ry)); // (T4 - T5) * T0 - T3 * Ry
+                Rz = Fp2.mul(Rz, t3); // Rz * T3
+            }
+        }
+        return ell_coeff;
+    }
+    function millerLoop(ell, g1) {
+        const { x } = CURVE.params;
+        const Px = g1[0];
+        const Py = g1[1];
+        let f12 = Fp12.ONE;
+        for (let j = 0, i = BLS_X_LEN - 2; i >= 0; i--, j++) {
+            const E = ell[j];
+            f12 = Fp12.multiplyBy014(f12, E[0], Fp2.mul(E[1], Px), Fp2.mul(E[2], Py));
+            if ((0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.bitGet)(x, i)) {
+                j += 1;
+                const F = ell[j];
+                f12 = Fp12.multiplyBy014(f12, F[0], Fp2.mul(F[1], Px), Fp2.mul(F[2], Py));
+            }
+            if (i !== 0)
+                f12 = Fp12.sqr(f12);
+        }
+        return Fp12.conjugate(f12);
+    }
+    const utils = {
+        randomPrivateKey: () => {
+            const length = (0,_modular_js__WEBPACK_IMPORTED_MODULE_1__.getMinHashLength)(Fr.ORDER);
+            return (0,_modular_js__WEBPACK_IMPORTED_MODULE_1__.mapHashToField)(CURVE.randomBytes(length), Fr.ORDER);
+        },
+        calcPairingPrecomputes,
+    };
+    // Point on G1 curve: (x, y)
+    const G1_ = (0,_weierstrass_js__WEBPACK_IMPORTED_MODULE_2__.weierstrassPoints)({ n: Fr.ORDER, ...CURVE.G1 });
+    const G1 = Object.assign(G1_, (0,_hash_to_curve_js__WEBPACK_IMPORTED_MODULE_3__.createHasher)(G1_.ProjectivePoint, CURVE.G1.mapToCurve, {
+        ...CURVE.htfDefaults,
+        ...CURVE.G1.htfDefaults,
+    }));
+    function pairingPrecomputes(point) {
+        const p = point;
+        if (p._PPRECOMPUTES)
+            return p._PPRECOMPUTES;
+        p._PPRECOMPUTES = calcPairingPrecomputes(point.toAffine());
+        return p._PPRECOMPUTES;
+    }
+    // TODO: export
+    // function clearPairingPrecomputes(point: G2) {
+    //   const p = point as G2 & withPairingPrecomputes;
+    //   p._PPRECOMPUTES = undefined;
+    // }
+    // Point on G2 curve (complex numbers): (x₁, x₂+i), (y₁, y₂+i)
+    const G2_ = (0,_weierstrass_js__WEBPACK_IMPORTED_MODULE_2__.weierstrassPoints)({ n: Fr.ORDER, ...CURVE.G2 });
+    const G2 = Object.assign(G2_, (0,_hash_to_curve_js__WEBPACK_IMPORTED_MODULE_3__.createHasher)(G2_.ProjectivePoint, CURVE.G2.mapToCurve, {
+        ...CURVE.htfDefaults,
+        ...CURVE.G2.htfDefaults,
+    }));
+    const { ShortSignature } = CURVE.G1;
+    const { Signature } = CURVE.G2;
+    // Calculates bilinear pairing
+    function pairing(Q, P, withFinalExponent = true) {
+        if (Q.equals(G1.ProjectivePoint.ZERO) || P.equals(G2.ProjectivePoint.ZERO))
+            throw new Error('pairing is not available for ZERO point');
+        Q.assertValidity();
+        P.assertValidity();
+        // Performance: 9ms for millerLoop and ~14ms for exp.
+        const Qa = Q.toAffine();
+        const looped = millerLoop(pairingPrecomputes(P), [Qa.x, Qa.y]);
+        return withFinalExponent ? Fp12.finalExponentiate(looped) : looped;
+    }
+    function normP1(point) {
+        return point instanceof G1.ProjectivePoint ? point : G1.ProjectivePoint.fromHex(point);
+    }
+    function normP1Hash(point, htfOpts) {
+        return point instanceof G1.ProjectivePoint
+            ? point
+            : G1.hashToCurve((0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.ensureBytes)('point', point), htfOpts);
+    }
+    function normP2(point) {
+        return point instanceof G2.ProjectivePoint ? point : Signature.fromHex(point);
+    }
+    function normP2Hash(point, htfOpts) {
+        return point instanceof G2.ProjectivePoint
+            ? point
+            : G2.hashToCurve((0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.ensureBytes)('point', point), htfOpts);
+    }
+    // Multiplies generator (G1) by private key.
+    // P = pk x G
+    function getPublicKey(privateKey) {
+        return G1.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(true);
+    }
+    // Multiplies generator (G2) by private key.
+    // P = pk x G
+    function getPublicKeyForShortSignatures(privateKey) {
+        return G2.ProjectivePoint.fromPrivateKey(privateKey).toRawBytes(true);
+    }
+    function sign(message, privateKey, htfOpts) {
+        const msgPoint = normP2Hash(message, htfOpts);
+        msgPoint.assertValidity();
+        const sigPoint = msgPoint.multiply(G1.normPrivateKeyToScalar(privateKey));
+        if (message instanceof G2.ProjectivePoint)
+            return sigPoint;
+        return Signature.toRawBytes(sigPoint);
+    }
+    function signShortSignature(message, privateKey, htfOpts) {
+        const msgPoint = normP1Hash(message, htfOpts);
+        msgPoint.assertValidity();
+        const sigPoint = msgPoint.multiply(G1.normPrivateKeyToScalar(privateKey));
+        if (message instanceof G1.ProjectivePoint)
+            return sigPoint;
+        return ShortSignature.toRawBytes(sigPoint);
+    }
+    // Checks if pairing of public key & hash is equal to pairing of generator & signature.
+    // e(P, H(m)) == e(G, S)
+    function verify(signature, message, publicKey, htfOpts) {
+        const P = normP1(publicKey);
+        const Hm = normP2Hash(message, htfOpts);
+        const G = G1.ProjectivePoint.BASE;
+        const S = normP2(signature);
+        // Instead of doing 2 exponentiations, we use property of billinear maps
+        // and do one exp after multiplying 2 points.
+        const ePHm = pairing(P.negate(), Hm, false);
+        const eGS = pairing(G, S, false);
+        const exp = Fp12.finalExponentiate(Fp12.mul(eGS, ePHm));
+        return Fp12.eql(exp, Fp12.ONE);
+    }
+    // Checks if pairing of public key & hash is equal to pairing of generator & signature.
+    // e(S, G) == e(H(m), P)
+    function verifyShortSignature(signature, message, publicKey, htfOpts) {
+        const P = normP2(publicKey);
+        const Hm = normP1Hash(message, htfOpts);
+        const G = G2.ProjectivePoint.BASE;
+        const S = normP1(signature);
+        // Instead of doing 2 exponentiations, we use property of billinear maps
+        // and do one exp after multiplying 2 points.
+        const eHmP = pairing(Hm, P, false);
+        const eSG = pairing(S, G.negate(), false);
+        const exp = Fp12.finalExponentiate(Fp12.mul(eSG, eHmP));
+        return Fp12.eql(exp, Fp12.ONE);
+    }
+    function aggregatePublicKeys(publicKeys) {
+        if (!publicKeys.length)
+            throw new Error('Expected non-empty array');
+        const agg = publicKeys.map(normP1).reduce((sum, p) => sum.add(p), G1.ProjectivePoint.ZERO);
+        const aggAffine = agg; //.toAffine();
+        if (publicKeys[0] instanceof G1.ProjectivePoint) {
+            aggAffine.assertValidity();
+            return aggAffine;
+        }
+        // toRawBytes ensures point validity
+        return aggAffine.toRawBytes(true);
+    }
+    function aggregateSignatures(signatures) {
+        if (!signatures.length)
+            throw new Error('Expected non-empty array');
+        const agg = signatures.map(normP2).reduce((sum, s) => sum.add(s), G2.ProjectivePoint.ZERO);
+        const aggAffine = agg; //.toAffine();
+        if (signatures[0] instanceof G2.ProjectivePoint) {
+            aggAffine.assertValidity();
+            return aggAffine;
+        }
+        return Signature.toRawBytes(aggAffine);
+    }
+    function aggregateShortSignatures(signatures) {
+        if (!signatures.length)
+            throw new Error('Expected non-empty array');
+        const agg = signatures.map(normP1).reduce((sum, s) => sum.add(s), G1.ProjectivePoint.ZERO);
+        const aggAffine = agg; //.toAffine();
+        if (signatures[0] instanceof G1.ProjectivePoint) {
+            aggAffine.assertValidity();
+            return aggAffine;
+        }
+        return ShortSignature.toRawBytes(aggAffine);
+    }
+    // https://ethresear.ch/t/fast-verification-of-multiple-bls-signatures/5407
+    // e(G, S) = e(G, SUM(n)(Si)) = MUL(n)(e(G, Si))
+    function verifyBatch(signature, messages, publicKeys, htfOpts) {
+        // @ts-ignore
+        // console.log('verifyBatch', bytesToHex(signature as any), messages, publicKeys.map(bytesToHex));
+        if (!messages.length)
+            throw new Error('Expected non-empty messages array');
+        if (publicKeys.length !== messages.length)
+            throw new Error('Pubkey count should equal msg count');
+        const sig = normP2(signature);
+        const nMessages = messages.map((i) => normP2Hash(i, htfOpts));
+        const nPublicKeys = publicKeys.map(normP1);
+        try {
+            const paired = [];
+            for (const message of new Set(nMessages)) {
+                const groupPublicKey = nMessages.reduce((groupPublicKey, subMessage, i) => subMessage === message ? groupPublicKey.add(nPublicKeys[i]) : groupPublicKey, G1.ProjectivePoint.ZERO);
+                // const msg = message instanceof PointG2 ? message : await PointG2.hashToCurve(message);
+                // Possible to batch pairing for same msg with different groupPublicKey here
+                paired.push(pairing(groupPublicKey, message, false));
+            }
+            paired.push(pairing(G1.ProjectivePoint.BASE.negate(), sig, false));
+            const product = paired.reduce((a, b) => Fp12.mul(a, b), Fp12.ONE);
+            const exp = Fp12.finalExponentiate(product);
+            return Fp12.eql(exp, Fp12.ONE);
+        }
+        catch {
+            return false;
+        }
+    }
+    G1.ProjectivePoint.BASE._setWindowSize(4);
+    return {
+        getPublicKey,
+        getPublicKeyForShortSignatures,
+        sign,
+        signShortSignature,
+        verify,
+        verifyBatch,
+        verifyShortSignature,
+        aggregatePublicKeys,
+        aggregateSignatures,
+        aggregateShortSignatures,
+        millerLoop,
+        pairing,
+        G1,
+        G2,
+        Signature,
+        ShortSignature,
+        fields: {
+            Fr,
+            Fp,
+            Fp2,
+            Fp6,
+            Fp12,
+        },
+        params: {
+            x: CURVE.params.x,
+            r: CURVE.params.r,
+            G1b: CURVE.G1.b,
+            G2b: CURVE.G2.b,
+        },
+        utils,
+    };
+}
+//# sourceMappingURL=bls.js.map
+
+/***/ }),
+
 /***/ "./node_modules/@noble/curves/esm/abstract/curve.js":
 /*!**********************************************************!*\
   !*** ./node_modules/@noble/curves/esm/abstract/curve.js ***!
@@ -21059,13 +27599,6 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _utils_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./utils.js */ "./node_modules/@noble/curves/esm/abstract/utils.js");
 
 
-function validateDST(dst) {
-    if ((0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.isBytes)(dst))
-        return dst;
-    if (typeof dst === 'string')
-        return (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.utf8ToBytes)(dst);
-    throw new Error('DST must be Uint8Array or string');
-}
 // Octet Stream to Integer. "spec" implementation of os2ip is 2.5x slower vs bytesToNumberBE.
 const os2ip = _utils_js__WEBPACK_IMPORTED_MODULE_0__.bytesToNumberBE;
 // Integer to Octet Stream (numberToBytesBE)
@@ -21087,20 +27620,16 @@ function strxor(a, b) {
     }
     return arr;
 }
-function abytes(item) {
-    if (!(0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.isBytes)(item))
-        throw new Error('Uint8Array expected');
-}
-function isNum(item) {
+function anum(item) {
     if (!Number.isSafeInteger(item))
         throw new Error('number expected');
 }
 // Produces a uniformly random byte string using a cryptographic hash function H that outputs b bits
 // https://www.rfc-editor.org/rfc/rfc9380#section-5.3.1
 function expand_message_xmd(msg, DST, lenInBytes, H) {
-    abytes(msg);
-    abytes(DST);
-    isNum(lenInBytes);
+    (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.abytes)(msg);
+    (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.abytes)(DST);
+    anum(lenInBytes);
     // https://www.rfc-editor.org/rfc/rfc9380#section-5.3.3
     if (DST.length > 255)
         DST = H((0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.concatBytes)((0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.utf8ToBytes)('H2C-OVERSIZE-DST-'), DST));
@@ -21127,9 +27656,9 @@ function expand_message_xmd(msg, DST, lenInBytes, H) {
 //    a random oracle under a reasonable cryptographic assumption.
 // https://www.rfc-editor.org/rfc/rfc9380#section-5.3.2
 function expand_message_xof(msg, DST, lenInBytes, k, H) {
-    abytes(msg);
-    abytes(DST);
-    isNum(lenInBytes);
+    (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.abytes)(msg);
+    (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.abytes)(DST);
+    anum(lenInBytes);
     // https://www.rfc-editor.org/rfc/rfc9380#section-5.3.3
     // DST = H('H2C-OVERSIZE-DST-' || a_very_long_DST, Math.ceil((lenInBytes * k) / 8));
     if (DST.length > 255) {
@@ -21163,9 +27692,9 @@ function hash_to_field(msg, count, options) {
         hash: 'hash',
     });
     const { p, k, m, hash, expand, DST: _DST } = options;
-    abytes(msg);
-    isNum(count);
-    const DST = validateDST(_DST);
+    (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.abytes)(msg);
+    anum(count);
+    const DST = typeof _DST === 'string' ? (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.utf8ToBytes)(_DST) : _DST;
     const log2p = p.toString(2).length;
     const L = Math.ceil((log2p + k) / 8); // section 5.1 of ietf draft link above
     const len_in_bytes = count * m * L;
@@ -21863,6 +28392,7 @@ function montgomery(curveDef) {
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   abytes: () => (/* binding */ abytes),
 /* harmony export */   bitGet: () => (/* binding */ bitGet),
 /* harmony export */   bitLen: () => (/* binding */ bitLen),
 /* harmony export */   bitMask: () => (/* binding */ bitMask),
@@ -21896,14 +28426,17 @@ function isBytes(a) {
     return (a instanceof Uint8Array ||
         (a != null && typeof a === 'object' && a.constructor.name === 'Uint8Array'));
 }
+function abytes(item) {
+    if (!isBytes(item))
+        throw new Error('Uint8Array expected');
+}
 // Array where index 0xf0 (240) is mapped to string 'f0'
 const hexes = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 /**
  * @example bytesToHex(Uint8Array.from([0xca, 0xfe, 0x01, 0x23])) // 'cafe0123'
  */
 function bytesToHex(bytes) {
-    if (!isBytes(bytes))
-        throw new Error('Uint8Array expected');
+    abytes(bytes);
     // pre-caching improves the speed 6x
     let hex = '';
     for (let i = 0; i < bytes.length; i++) {
@@ -21959,8 +28492,7 @@ function bytesToNumberBE(bytes) {
     return hexToNumber(bytesToHex(bytes));
 }
 function bytesToNumberLE(bytes) {
-    if (!isBytes(bytes))
-        throw new Error('Uint8Array expected');
+    abytes(bytes);
     return hexToNumber(bytesToHex(Uint8Array.from(bytes).reverse()));
 }
 function numberToBytesBE(n, len) {
@@ -22012,13 +28544,11 @@ function concatBytes(...arrays) {
     let sum = 0;
     for (let i = 0; i < arrays.length; i++) {
         const a = arrays[i];
-        if (!isBytes(a))
-            throw new Error('Uint8Array expected');
+        abytes(a);
         sum += a.length;
     }
-    let res = new Uint8Array(sum);
-    let pad = 0;
-    for (let i = 0; i < arrays.length; i++) {
+    const res = new Uint8Array(sum);
+    for (let i = 0, pad = 0; i < arrays.length; i++) {
         const a = arrays[i];
         res.set(a, pad);
         pad += a.length;
@@ -22064,9 +28594,9 @@ function bitGet(n, pos) {
 /**
  * Sets single bit at position.
  */
-const bitSet = (n, pos, value) => {
+function bitSet(n, pos, value) {
     return n | ((value ? _1n : _0n) << BigInt(pos));
-};
+}
 /**
  * Calculate mask for N bits. Not using ** operator with bigints because of old engines.
  * Same as BigInt(`0b${Array(i).fill('1').join('')}`)
@@ -22173,6 +28703,2337 @@ function validateObject(object, validators, optValidators = {}) {
 // const z3 = validateObject(o, { test: 'boolean', z: 'bug' });
 // const z4 = validateObject(o, { a: 'boolean', z: 'bug' });
 //# sourceMappingURL=utils.js.map
+
+/***/ }),
+
+/***/ "./node_modules/@noble/curves/esm/abstract/weierstrass.js":
+/*!****************************************************************!*\
+  !*** ./node_modules/@noble/curves/esm/abstract/weierstrass.js ***!
+  \****************************************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   DER: () => (/* binding */ DER),
+/* harmony export */   SWUFpSqrtRatio: () => (/* binding */ SWUFpSqrtRatio),
+/* harmony export */   mapToCurveSimpleSWU: () => (/* binding */ mapToCurveSimpleSWU),
+/* harmony export */   weierstrass: () => (/* binding */ weierstrass),
+/* harmony export */   weierstrassPoints: () => (/* binding */ weierstrassPoints)
+/* harmony export */ });
+/* harmony import */ var _modular_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./modular.js */ "./node_modules/@noble/curves/esm/abstract/modular.js");
+/* harmony import */ var _utils_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./utils.js */ "./node_modules/@noble/curves/esm/abstract/utils.js");
+/* harmony import */ var _curve_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./curve.js */ "./node_modules/@noble/curves/esm/abstract/curve.js");
+/*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+// Short Weierstrass curve. The formula is: y² = x³ + ax + b
+
+
+
+
+function validatePointOpts(curve) {
+    const opts = (0,_curve_js__WEBPACK_IMPORTED_MODULE_0__.validateBasic)(curve);
+    _utils_js__WEBPACK_IMPORTED_MODULE_1__.validateObject(opts, {
+        a: 'field',
+        b: 'field',
+    }, {
+        allowedPrivateKeyLengths: 'array',
+        wrapPrivateKey: 'boolean',
+        isTorsionFree: 'function',
+        clearCofactor: 'function',
+        allowInfinityPoint: 'boolean',
+        fromBytes: 'function',
+        toBytes: 'function',
+    });
+    const { endo, Fp, a } = opts;
+    if (endo) {
+        if (!Fp.eql(a, Fp.ZERO)) {
+            throw new Error('Endomorphism can only be defined for Koblitz curves that have a=0');
+        }
+        if (typeof endo !== 'object' ||
+            typeof endo.beta !== 'bigint' ||
+            typeof endo.splitScalar !== 'function') {
+            throw new Error('Expected endomorphism with beta: bigint and splitScalar: function');
+        }
+    }
+    return Object.freeze({ ...opts });
+}
+// ASN.1 DER encoding utilities
+const { bytesToNumberBE: b2n, hexToBytes: h2b } = _utils_js__WEBPACK_IMPORTED_MODULE_1__;
+const DER = {
+    // asn.1 DER encoding utils
+    Err: class DERErr extends Error {
+        constructor(m = '') {
+            super(m);
+        }
+    },
+    _parseInt(data) {
+        const { Err: E } = DER;
+        if (data.length < 2 || data[0] !== 0x02)
+            throw new E('Invalid signature integer tag');
+        const len = data[1];
+        const res = data.subarray(2, len + 2);
+        if (!len || res.length !== len)
+            throw new E('Invalid signature integer: wrong length');
+        // https://crypto.stackexchange.com/a/57734 Leftmost bit of first byte is 'negative' flag,
+        // since we always use positive integers here. It must always be empty:
+        // - add zero byte if exists
+        // - if next byte doesn't have a flag, leading zero is not allowed (minimal encoding)
+        if (res[0] & 0b10000000)
+            throw new E('Invalid signature integer: negative');
+        if (res[0] === 0x00 && !(res[1] & 0b10000000))
+            throw new E('Invalid signature integer: unnecessary leading zero');
+        return { d: b2n(res), l: data.subarray(len + 2) }; // d is data, l is left
+    },
+    toSig(hex) {
+        // parse DER signature
+        const { Err: E } = DER;
+        const data = typeof hex === 'string' ? h2b(hex) : hex;
+        _utils_js__WEBPACK_IMPORTED_MODULE_1__.abytes(data);
+        let l = data.length;
+        if (l < 2 || data[0] != 0x30)
+            throw new E('Invalid signature tag');
+        if (data[1] !== l - 2)
+            throw new E('Invalid signature: incorrect length');
+        const { d: r, l: sBytes } = DER._parseInt(data.subarray(2));
+        const { d: s, l: rBytesLeft } = DER._parseInt(sBytes);
+        if (rBytesLeft.length)
+            throw new E('Invalid signature: left bytes after parsing');
+        return { r, s };
+    },
+    hexFromSig(sig) {
+        // Add leading zero if first byte has negative bit enabled. More details in '_parseInt'
+        const slice = (s) => (Number.parseInt(s[0], 16) & 0b1000 ? '00' + s : s);
+        const h = (num) => {
+            const hex = num.toString(16);
+            return hex.length & 1 ? `0${hex}` : hex;
+        };
+        const s = slice(h(sig.s));
+        const r = slice(h(sig.r));
+        const shl = s.length / 2;
+        const rhl = r.length / 2;
+        const sl = h(shl);
+        const rl = h(rhl);
+        return `30${h(rhl + shl + 4)}02${rl}${r}02${sl}${s}`;
+    },
+};
+// Be friendly to bad ECMAScript parsers by not using bigint literals
+// prettier-ignore
+const _0n = BigInt(0), _1n = BigInt(1), _2n = BigInt(2), _3n = BigInt(3), _4n = BigInt(4);
+function weierstrassPoints(opts) {
+    const CURVE = validatePointOpts(opts);
+    const { Fp } = CURVE; // All curves has same field / group length as for now, but they can differ
+    const toBytes = CURVE.toBytes ||
+        ((_c, point, _isCompressed) => {
+            const a = point.toAffine();
+            return _utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes(Uint8Array.from([0x04]), Fp.toBytes(a.x), Fp.toBytes(a.y));
+        });
+    const fromBytes = CURVE.fromBytes ||
+        ((bytes) => {
+            // const head = bytes[0];
+            const tail = bytes.subarray(1);
+            // if (head !== 0x04) throw new Error('Only non-compressed encoding is supported');
+            const x = Fp.fromBytes(tail.subarray(0, Fp.BYTES));
+            const y = Fp.fromBytes(tail.subarray(Fp.BYTES, 2 * Fp.BYTES));
+            return { x, y };
+        });
+    /**
+     * y² = x³ + ax + b: Short weierstrass curve formula
+     * @returns y²
+     */
+    function weierstrassEquation(x) {
+        const { a, b } = CURVE;
+        const x2 = Fp.sqr(x); // x * x
+        const x3 = Fp.mul(x2, x); // x2 * x
+        return Fp.add(Fp.add(x3, Fp.mul(x, a)), b); // x3 + a * x + b
+    }
+    // Validate whether the passed curve params are valid.
+    // We check if curve equation works for generator point.
+    // `assertValidity()` won't work: `isTorsionFree()` is not available at this point in bls12-381.
+    // ProjectivePoint class has not been initialized yet.
+    if (!Fp.eql(Fp.sqr(CURVE.Gy), weierstrassEquation(CURVE.Gx)))
+        throw new Error('bad generator point: equation left != right');
+    // Valid group elements reside in range 1..n-1
+    function isWithinCurveOrder(num) {
+        return typeof num === 'bigint' && _0n < num && num < CURVE.n;
+    }
+    function assertGE(num) {
+        if (!isWithinCurveOrder(num))
+            throw new Error('Expected valid bigint: 0 < bigint < curve.n');
+    }
+    // Validates if priv key is valid and converts it to bigint.
+    // Supports options allowedPrivateKeyLengths and wrapPrivateKey.
+    function normPrivateKeyToScalar(key) {
+        const { allowedPrivateKeyLengths: lengths, nByteLength, wrapPrivateKey, n } = CURVE;
+        if (lengths && typeof key !== 'bigint') {
+            if (_utils_js__WEBPACK_IMPORTED_MODULE_1__.isBytes(key))
+                key = _utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToHex(key);
+            // Normalize to hex string, pad. E.g. P521 would norm 130-132 char hex to 132-char bytes
+            if (typeof key !== 'string' || !lengths.includes(key.length))
+                throw new Error('Invalid key');
+            key = key.padStart(nByteLength * 2, '0');
+        }
+        let num;
+        try {
+            num =
+                typeof key === 'bigint'
+                    ? key
+                    : _utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE((0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('private key', key, nByteLength));
+        }
+        catch (error) {
+            throw new Error(`private key must be ${nByteLength} bytes, hex or bigint, not ${typeof key}`);
+        }
+        if (wrapPrivateKey)
+            num = _modular_js__WEBPACK_IMPORTED_MODULE_2__.mod(num, n); // disabled by default, enabled for BLS
+        assertGE(num); // num in range [1..N-1]
+        return num;
+    }
+    const pointPrecomputes = new Map();
+    function assertPrjPoint(other) {
+        if (!(other instanceof Point))
+            throw new Error('ProjectivePoint expected');
+    }
+    /**
+     * Projective Point works in 3d / projective (homogeneous) coordinates: (x, y, z) ∋ (x=x/z, y=y/z)
+     * Default Point works in 2d / affine coordinates: (x, y)
+     * We're doing calculations in projective, because its operations don't require costly inversion.
+     */
+    class Point {
+        constructor(px, py, pz) {
+            this.px = px;
+            this.py = py;
+            this.pz = pz;
+            if (px == null || !Fp.isValid(px))
+                throw new Error('x required');
+            if (py == null || !Fp.isValid(py))
+                throw new Error('y required');
+            if (pz == null || !Fp.isValid(pz))
+                throw new Error('z required');
+        }
+        // Does not validate if the point is on-curve.
+        // Use fromHex instead, or call assertValidity() later.
+        static fromAffine(p) {
+            const { x, y } = p || {};
+            if (!p || !Fp.isValid(x) || !Fp.isValid(y))
+                throw new Error('invalid affine point');
+            if (p instanceof Point)
+                throw new Error('projective point not allowed');
+            const is0 = (i) => Fp.eql(i, Fp.ZERO);
+            // fromAffine(x:0, y:0) would produce (x:0, y:0, z:1), but we need (x:0, y:1, z:0)
+            if (is0(x) && is0(y))
+                return Point.ZERO;
+            return new Point(x, y, Fp.ONE);
+        }
+        get x() {
+            return this.toAffine().x;
+        }
+        get y() {
+            return this.toAffine().y;
+        }
+        /**
+         * Takes a bunch of Projective Points but executes only one
+         * inversion on all of them. Inversion is very slow operation,
+         * so this improves performance massively.
+         * Optimization: converts a list of projective points to a list of identical points with Z=1.
+         */
+        static normalizeZ(points) {
+            const toInv = Fp.invertBatch(points.map((p) => p.pz));
+            return points.map((p, i) => p.toAffine(toInv[i])).map(Point.fromAffine);
+        }
+        /**
+         * Converts hash string or Uint8Array to Point.
+         * @param hex short/long ECDSA hex
+         */
+        static fromHex(hex) {
+            const P = Point.fromAffine(fromBytes((0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('pointHex', hex)));
+            P.assertValidity();
+            return P;
+        }
+        // Multiplies generator point by privateKey.
+        static fromPrivateKey(privateKey) {
+            return Point.BASE.multiply(normPrivateKeyToScalar(privateKey));
+        }
+        // "Private method", don't use it directly
+        _setWindowSize(windowSize) {
+            this._WINDOW_SIZE = windowSize;
+            pointPrecomputes.delete(this);
+        }
+        // A point on curve is valid if it conforms to equation.
+        assertValidity() {
+            if (this.is0()) {
+                // (0, 1, 0) aka ZERO is invalid in most contexts.
+                // In BLS, ZERO can be serialized, so we allow it.
+                // (0, 0, 0) is wrong representation of ZERO and is always invalid.
+                if (CURVE.allowInfinityPoint && !Fp.is0(this.py))
+                    return;
+                throw new Error('bad point: ZERO');
+            }
+            // Some 3rd-party test vectors require different wording between here & `fromCompressedHex`
+            const { x, y } = this.toAffine();
+            // Check if x, y are valid field elements
+            if (!Fp.isValid(x) || !Fp.isValid(y))
+                throw new Error('bad point: x or y not FE');
+            const left = Fp.sqr(y); // y²
+            const right = weierstrassEquation(x); // x³ + ax + b
+            if (!Fp.eql(left, right))
+                throw new Error('bad point: equation left != right');
+            if (!this.isTorsionFree())
+                throw new Error('bad point: not in prime-order subgroup');
+        }
+        hasEvenY() {
+            const { y } = this.toAffine();
+            if (Fp.isOdd)
+                return !Fp.isOdd(y);
+            throw new Error("Field doesn't support isOdd");
+        }
+        /**
+         * Compare one point to another.
+         */
+        equals(other) {
+            assertPrjPoint(other);
+            const { px: X1, py: Y1, pz: Z1 } = this;
+            const { px: X2, py: Y2, pz: Z2 } = other;
+            const U1 = Fp.eql(Fp.mul(X1, Z2), Fp.mul(X2, Z1));
+            const U2 = Fp.eql(Fp.mul(Y1, Z2), Fp.mul(Y2, Z1));
+            return U1 && U2;
+        }
+        /**
+         * Flips point to one corresponding to (x, -y) in Affine coordinates.
+         */
+        negate() {
+            return new Point(this.px, Fp.neg(this.py), this.pz);
+        }
+        // Renes-Costello-Batina exception-free doubling formula.
+        // There is 30% faster Jacobian formula, but it is not complete.
+        // https://eprint.iacr.org/2015/1060, algorithm 3
+        // Cost: 8M + 3S + 3*a + 2*b3 + 15add.
+        double() {
+            const { a, b } = CURVE;
+            const b3 = Fp.mul(b, _3n);
+            const { px: X1, py: Y1, pz: Z1 } = this;
+            let X3 = Fp.ZERO, Y3 = Fp.ZERO, Z3 = Fp.ZERO; // prettier-ignore
+            let t0 = Fp.mul(X1, X1); // step 1
+            let t1 = Fp.mul(Y1, Y1);
+            let t2 = Fp.mul(Z1, Z1);
+            let t3 = Fp.mul(X1, Y1);
+            t3 = Fp.add(t3, t3); // step 5
+            Z3 = Fp.mul(X1, Z1);
+            Z3 = Fp.add(Z3, Z3);
+            X3 = Fp.mul(a, Z3);
+            Y3 = Fp.mul(b3, t2);
+            Y3 = Fp.add(X3, Y3); // step 10
+            X3 = Fp.sub(t1, Y3);
+            Y3 = Fp.add(t1, Y3);
+            Y3 = Fp.mul(X3, Y3);
+            X3 = Fp.mul(t3, X3);
+            Z3 = Fp.mul(b3, Z3); // step 15
+            t2 = Fp.mul(a, t2);
+            t3 = Fp.sub(t0, t2);
+            t3 = Fp.mul(a, t3);
+            t3 = Fp.add(t3, Z3);
+            Z3 = Fp.add(t0, t0); // step 20
+            t0 = Fp.add(Z3, t0);
+            t0 = Fp.add(t0, t2);
+            t0 = Fp.mul(t0, t3);
+            Y3 = Fp.add(Y3, t0);
+            t2 = Fp.mul(Y1, Z1); // step 25
+            t2 = Fp.add(t2, t2);
+            t0 = Fp.mul(t2, t3);
+            X3 = Fp.sub(X3, t0);
+            Z3 = Fp.mul(t2, t1);
+            Z3 = Fp.add(Z3, Z3); // step 30
+            Z3 = Fp.add(Z3, Z3);
+            return new Point(X3, Y3, Z3);
+        }
+        // Renes-Costello-Batina exception-free addition formula.
+        // There is 30% faster Jacobian formula, but it is not complete.
+        // https://eprint.iacr.org/2015/1060, algorithm 1
+        // Cost: 12M + 0S + 3*a + 3*b3 + 23add.
+        add(other) {
+            assertPrjPoint(other);
+            const { px: X1, py: Y1, pz: Z1 } = this;
+            const { px: X2, py: Y2, pz: Z2 } = other;
+            let X3 = Fp.ZERO, Y3 = Fp.ZERO, Z3 = Fp.ZERO; // prettier-ignore
+            const a = CURVE.a;
+            const b3 = Fp.mul(CURVE.b, _3n);
+            let t0 = Fp.mul(X1, X2); // step 1
+            let t1 = Fp.mul(Y1, Y2);
+            let t2 = Fp.mul(Z1, Z2);
+            let t3 = Fp.add(X1, Y1);
+            let t4 = Fp.add(X2, Y2); // step 5
+            t3 = Fp.mul(t3, t4);
+            t4 = Fp.add(t0, t1);
+            t3 = Fp.sub(t3, t4);
+            t4 = Fp.add(X1, Z1);
+            let t5 = Fp.add(X2, Z2); // step 10
+            t4 = Fp.mul(t4, t5);
+            t5 = Fp.add(t0, t2);
+            t4 = Fp.sub(t4, t5);
+            t5 = Fp.add(Y1, Z1);
+            X3 = Fp.add(Y2, Z2); // step 15
+            t5 = Fp.mul(t5, X3);
+            X3 = Fp.add(t1, t2);
+            t5 = Fp.sub(t5, X3);
+            Z3 = Fp.mul(a, t4);
+            X3 = Fp.mul(b3, t2); // step 20
+            Z3 = Fp.add(X3, Z3);
+            X3 = Fp.sub(t1, Z3);
+            Z3 = Fp.add(t1, Z3);
+            Y3 = Fp.mul(X3, Z3);
+            t1 = Fp.add(t0, t0); // step 25
+            t1 = Fp.add(t1, t0);
+            t2 = Fp.mul(a, t2);
+            t4 = Fp.mul(b3, t4);
+            t1 = Fp.add(t1, t2);
+            t2 = Fp.sub(t0, t2); // step 30
+            t2 = Fp.mul(a, t2);
+            t4 = Fp.add(t4, t2);
+            t0 = Fp.mul(t1, t4);
+            Y3 = Fp.add(Y3, t0);
+            t0 = Fp.mul(t5, t4); // step 35
+            X3 = Fp.mul(t3, X3);
+            X3 = Fp.sub(X3, t0);
+            t0 = Fp.mul(t3, t1);
+            Z3 = Fp.mul(t5, Z3);
+            Z3 = Fp.add(Z3, t0); // step 40
+            return new Point(X3, Y3, Z3);
+        }
+        subtract(other) {
+            return this.add(other.negate());
+        }
+        is0() {
+            return this.equals(Point.ZERO);
+        }
+        wNAF(n) {
+            return wnaf.wNAFCached(this, pointPrecomputes, n, (comp) => {
+                const toInv = Fp.invertBatch(comp.map((p) => p.pz));
+                return comp.map((p, i) => p.toAffine(toInv[i])).map(Point.fromAffine);
+            });
+        }
+        /**
+         * Non-constant-time multiplication. Uses double-and-add algorithm.
+         * It's faster, but should only be used when you don't care about
+         * an exposed private key e.g. sig verification, which works over *public* keys.
+         */
+        multiplyUnsafe(n) {
+            const I = Point.ZERO;
+            if (n === _0n)
+                return I;
+            assertGE(n); // Will throw on 0
+            if (n === _1n)
+                return this;
+            const { endo } = CURVE;
+            if (!endo)
+                return wnaf.unsafeLadder(this, n);
+            // Apply endomorphism
+            let { k1neg, k1, k2neg, k2 } = endo.splitScalar(n);
+            let k1p = I;
+            let k2p = I;
+            let d = this;
+            while (k1 > _0n || k2 > _0n) {
+                if (k1 & _1n)
+                    k1p = k1p.add(d);
+                if (k2 & _1n)
+                    k2p = k2p.add(d);
+                d = d.double();
+                k1 >>= _1n;
+                k2 >>= _1n;
+            }
+            if (k1neg)
+                k1p = k1p.negate();
+            if (k2neg)
+                k2p = k2p.negate();
+            k2p = new Point(Fp.mul(k2p.px, endo.beta), k2p.py, k2p.pz);
+            return k1p.add(k2p);
+        }
+        /**
+         * Constant time multiplication.
+         * Uses wNAF method. Windowed method may be 10% faster,
+         * but takes 2x longer to generate and consumes 2x memory.
+         * Uses precomputes when available.
+         * Uses endomorphism for Koblitz curves.
+         * @param scalar by which the point would be multiplied
+         * @returns New point
+         */
+        multiply(scalar) {
+            assertGE(scalar);
+            let n = scalar;
+            let point, fake; // Fake point is used to const-time mult
+            const { endo } = CURVE;
+            if (endo) {
+                const { k1neg, k1, k2neg, k2 } = endo.splitScalar(n);
+                let { p: k1p, f: f1p } = this.wNAF(k1);
+                let { p: k2p, f: f2p } = this.wNAF(k2);
+                k1p = wnaf.constTimeNegate(k1neg, k1p);
+                k2p = wnaf.constTimeNegate(k2neg, k2p);
+                k2p = new Point(Fp.mul(k2p.px, endo.beta), k2p.py, k2p.pz);
+                point = k1p.add(k2p);
+                fake = f1p.add(f2p);
+            }
+            else {
+                const { p, f } = this.wNAF(n);
+                point = p;
+                fake = f;
+            }
+            // Normalize `z` for both points, but return only real one
+            return Point.normalizeZ([point, fake])[0];
+        }
+        /**
+         * Efficiently calculate `aP + bQ`. Unsafe, can expose private key, if used incorrectly.
+         * Not using Strauss-Shamir trick: precomputation tables are faster.
+         * The trick could be useful if both P and Q are not G (not in our case).
+         * @returns non-zero affine point
+         */
+        multiplyAndAddUnsafe(Q, a, b) {
+            const G = Point.BASE; // No Strauss-Shamir trick: we have 10% faster G precomputes
+            const mul = (P, a // Select faster multiply() method
+            ) => (a === _0n || a === _1n || !P.equals(G) ? P.multiplyUnsafe(a) : P.multiply(a));
+            const sum = mul(this, a).add(mul(Q, b));
+            return sum.is0() ? undefined : sum;
+        }
+        // Converts Projective point to affine (x, y) coordinates.
+        // Can accept precomputed Z^-1 - for example, from invertBatch.
+        // (x, y, z) ∋ (x=x/z, y=y/z)
+        toAffine(iz) {
+            const { px: x, py: y, pz: z } = this;
+            const is0 = this.is0();
+            // If invZ was 0, we return zero point. However we still want to execute
+            // all operations, so we replace invZ with a random number, 1.
+            if (iz == null)
+                iz = is0 ? Fp.ONE : Fp.inv(z);
+            const ax = Fp.mul(x, iz);
+            const ay = Fp.mul(y, iz);
+            const zz = Fp.mul(z, iz);
+            if (is0)
+                return { x: Fp.ZERO, y: Fp.ZERO };
+            if (!Fp.eql(zz, Fp.ONE))
+                throw new Error('invZ was invalid');
+            return { x: ax, y: ay };
+        }
+        isTorsionFree() {
+            const { h: cofactor, isTorsionFree } = CURVE;
+            if (cofactor === _1n)
+                return true; // No subgroups, always torsion-free
+            if (isTorsionFree)
+                return isTorsionFree(Point, this);
+            throw new Error('isTorsionFree() has not been declared for the elliptic curve');
+        }
+        clearCofactor() {
+            const { h: cofactor, clearCofactor } = CURVE;
+            if (cofactor === _1n)
+                return this; // Fast-path
+            if (clearCofactor)
+                return clearCofactor(Point, this);
+            return this.multiplyUnsafe(CURVE.h);
+        }
+        toRawBytes(isCompressed = true) {
+            this.assertValidity();
+            return toBytes(Point, this, isCompressed);
+        }
+        toHex(isCompressed = true) {
+            return _utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToHex(this.toRawBytes(isCompressed));
+        }
+    }
+    Point.BASE = new Point(CURVE.Gx, CURVE.Gy, Fp.ONE);
+    Point.ZERO = new Point(Fp.ZERO, Fp.ONE, Fp.ZERO);
+    const _bits = CURVE.nBitLength;
+    const wnaf = (0,_curve_js__WEBPACK_IMPORTED_MODULE_0__.wNAF)(Point, CURVE.endo ? Math.ceil(_bits / 2) : _bits);
+    // Validate if generator point is on curve
+    return {
+        CURVE,
+        ProjectivePoint: Point,
+        normPrivateKeyToScalar,
+        weierstrassEquation,
+        isWithinCurveOrder,
+    };
+}
+function validateOpts(curve) {
+    const opts = (0,_curve_js__WEBPACK_IMPORTED_MODULE_0__.validateBasic)(curve);
+    _utils_js__WEBPACK_IMPORTED_MODULE_1__.validateObject(opts, {
+        hash: 'hash',
+        hmac: 'function',
+        randomBytes: 'function',
+    }, {
+        bits2int: 'function',
+        bits2int_modN: 'function',
+        lowS: 'boolean',
+    });
+    return Object.freeze({ lowS: true, ...opts });
+}
+function weierstrass(curveDef) {
+    const CURVE = validateOpts(curveDef);
+    const { Fp, n: CURVE_ORDER } = CURVE;
+    const compressedLen = Fp.BYTES + 1; // e.g. 33 for 32
+    const uncompressedLen = 2 * Fp.BYTES + 1; // e.g. 65 for 32
+    function isValidFieldElement(num) {
+        return _0n < num && num < Fp.ORDER; // 0 is banned since it's not invertible FE
+    }
+    function modN(a) {
+        return _modular_js__WEBPACK_IMPORTED_MODULE_2__.mod(a, CURVE_ORDER);
+    }
+    function invN(a) {
+        return _modular_js__WEBPACK_IMPORTED_MODULE_2__.invert(a, CURVE_ORDER);
+    }
+    const { ProjectivePoint: Point, normPrivateKeyToScalar, weierstrassEquation, isWithinCurveOrder, } = weierstrassPoints({
+        ...CURVE,
+        toBytes(_c, point, isCompressed) {
+            const a = point.toAffine();
+            const x = Fp.toBytes(a.x);
+            const cat = _utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes;
+            if (isCompressed) {
+                return cat(Uint8Array.from([point.hasEvenY() ? 0x02 : 0x03]), x);
+            }
+            else {
+                return cat(Uint8Array.from([0x04]), x, Fp.toBytes(a.y));
+            }
+        },
+        fromBytes(bytes) {
+            const len = bytes.length;
+            const head = bytes[0];
+            const tail = bytes.subarray(1);
+            // this.assertValidity() is done inside of fromHex
+            if (len === compressedLen && (head === 0x02 || head === 0x03)) {
+                const x = _utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE(tail);
+                if (!isValidFieldElement(x))
+                    throw new Error('Point is not on curve');
+                const y2 = weierstrassEquation(x); // y² = x³ + ax + b
+                let y;
+                try {
+                    y = Fp.sqrt(y2); // y = y² ^ (p+1)/4
+                }
+                catch (sqrtError) {
+                    const suffix = sqrtError instanceof Error ? ': ' + sqrtError.message : '';
+                    throw new Error('Point is not on curve' + suffix);
+                }
+                const isYOdd = (y & _1n) === _1n;
+                // ECDSA
+                const isHeadOdd = (head & 1) === 1;
+                if (isHeadOdd !== isYOdd)
+                    y = Fp.neg(y);
+                return { x, y };
+            }
+            else if (len === uncompressedLen && head === 0x04) {
+                const x = Fp.fromBytes(tail.subarray(0, Fp.BYTES));
+                const y = Fp.fromBytes(tail.subarray(Fp.BYTES, 2 * Fp.BYTES));
+                return { x, y };
+            }
+            else {
+                throw new Error(`Point of length ${len} was invalid. Expected ${compressedLen} compressed bytes or ${uncompressedLen} uncompressed bytes`);
+            }
+        },
+    });
+    const numToNByteStr = (num) => _utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToHex(_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE(num, CURVE.nByteLength));
+    function isBiggerThanHalfOrder(number) {
+        const HALF = CURVE_ORDER >> _1n;
+        return number > HALF;
+    }
+    function normalizeS(s) {
+        return isBiggerThanHalfOrder(s) ? modN(-s) : s;
+    }
+    // slice bytes num
+    const slcNum = (b, from, to) => _utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE(b.slice(from, to));
+    /**
+     * ECDSA signature with its (r, s) properties. Supports DER & compact representations.
+     */
+    class Signature {
+        constructor(r, s, recovery) {
+            this.r = r;
+            this.s = s;
+            this.recovery = recovery;
+            this.assertValidity();
+        }
+        // pair (bytes of r, bytes of s)
+        static fromCompact(hex) {
+            const l = CURVE.nByteLength;
+            hex = (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('compactSignature', hex, l * 2);
+            return new Signature(slcNum(hex, 0, l), slcNum(hex, l, 2 * l));
+        }
+        // DER encoded ECDSA signature
+        // https://bitcoin.stackexchange.com/questions/57644/what-are-the-parts-of-a-bitcoin-transaction-input-script
+        static fromDER(hex) {
+            const { r, s } = DER.toSig((0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('DER', hex));
+            return new Signature(r, s);
+        }
+        assertValidity() {
+            // can use assertGE here
+            if (!isWithinCurveOrder(this.r))
+                throw new Error('r must be 0 < r < CURVE.n');
+            if (!isWithinCurveOrder(this.s))
+                throw new Error('s must be 0 < s < CURVE.n');
+        }
+        addRecoveryBit(recovery) {
+            return new Signature(this.r, this.s, recovery);
+        }
+        recoverPublicKey(msgHash) {
+            const { r, s, recovery: rec } = this;
+            const h = bits2int_modN((0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('msgHash', msgHash)); // Truncate hash
+            if (rec == null || ![0, 1, 2, 3].includes(rec))
+                throw new Error('recovery id invalid');
+            const radj = rec === 2 || rec === 3 ? r + CURVE.n : r;
+            if (radj >= Fp.ORDER)
+                throw new Error('recovery id 2 or 3 invalid');
+            const prefix = (rec & 1) === 0 ? '02' : '03';
+            const R = Point.fromHex(prefix + numToNByteStr(radj));
+            const ir = invN(radj); // r^-1
+            const u1 = modN(-h * ir); // -hr^-1
+            const u2 = modN(s * ir); // sr^-1
+            const Q = Point.BASE.multiplyAndAddUnsafe(R, u1, u2); // (sr^-1)R-(hr^-1)G = -(hr^-1)G + (sr^-1)
+            if (!Q)
+                throw new Error('point at infinify'); // unsafe is fine: no priv data leaked
+            Q.assertValidity();
+            return Q;
+        }
+        // Signatures should be low-s, to prevent malleability.
+        hasHighS() {
+            return isBiggerThanHalfOrder(this.s);
+        }
+        normalizeS() {
+            return this.hasHighS() ? new Signature(this.r, modN(-this.s), this.recovery) : this;
+        }
+        // DER-encoded
+        toDERRawBytes() {
+            return _utils_js__WEBPACK_IMPORTED_MODULE_1__.hexToBytes(this.toDERHex());
+        }
+        toDERHex() {
+            return DER.hexFromSig({ r: this.r, s: this.s });
+        }
+        // padded bytes of r, then padded bytes of s
+        toCompactRawBytes() {
+            return _utils_js__WEBPACK_IMPORTED_MODULE_1__.hexToBytes(this.toCompactHex());
+        }
+        toCompactHex() {
+            return numToNByteStr(this.r) + numToNByteStr(this.s);
+        }
+    }
+    const utils = {
+        isValidPrivateKey(privateKey) {
+            try {
+                normPrivateKeyToScalar(privateKey);
+                return true;
+            }
+            catch (error) {
+                return false;
+            }
+        },
+        normPrivateKeyToScalar: normPrivateKeyToScalar,
+        /**
+         * Produces cryptographically secure private key from random of size
+         * (groupLen + ceil(groupLen / 2)) with modulo bias being negligible.
+         */
+        randomPrivateKey: () => {
+            const length = _modular_js__WEBPACK_IMPORTED_MODULE_2__.getMinHashLength(CURVE.n);
+            return _modular_js__WEBPACK_IMPORTED_MODULE_2__.mapHashToField(CURVE.randomBytes(length), CURVE.n);
+        },
+        /**
+         * Creates precompute table for an arbitrary EC point. Makes point "cached".
+         * Allows to massively speed-up `point.multiply(scalar)`.
+         * @returns cached point
+         * @example
+         * const fast = utils.precompute(8, ProjectivePoint.fromHex(someonesPubKey));
+         * fast.multiply(privKey); // much faster ECDH now
+         */
+        precompute(windowSize = 8, point = Point.BASE) {
+            point._setWindowSize(windowSize);
+            point.multiply(BigInt(3)); // 3 is arbitrary, just need any number here
+            return point;
+        },
+    };
+    /**
+     * Computes public key for a private key. Checks for validity of the private key.
+     * @param privateKey private key
+     * @param isCompressed whether to return compact (default), or full key
+     * @returns Public key, full when isCompressed=false; short when isCompressed=true
+     */
+    function getPublicKey(privateKey, isCompressed = true) {
+        return Point.fromPrivateKey(privateKey).toRawBytes(isCompressed);
+    }
+    /**
+     * Quick and dirty check for item being public key. Does not validate hex, or being on-curve.
+     */
+    function isProbPub(item) {
+        const arr = _utils_js__WEBPACK_IMPORTED_MODULE_1__.isBytes(item);
+        const str = typeof item === 'string';
+        const len = (arr || str) && item.length;
+        if (arr)
+            return len === compressedLen || len === uncompressedLen;
+        if (str)
+            return len === 2 * compressedLen || len === 2 * uncompressedLen;
+        if (item instanceof Point)
+            return true;
+        return false;
+    }
+    /**
+     * ECDH (Elliptic Curve Diffie Hellman).
+     * Computes shared public key from private key and public key.
+     * Checks: 1) private key validity 2) shared key is on-curve.
+     * Does NOT hash the result.
+     * @param privateA private key
+     * @param publicB different public key
+     * @param isCompressed whether to return compact (default), or full key
+     * @returns shared public key
+     */
+    function getSharedSecret(privateA, publicB, isCompressed = true) {
+        if (isProbPub(privateA))
+            throw new Error('first arg must be private key');
+        if (!isProbPub(publicB))
+            throw new Error('second arg must be public key');
+        const b = Point.fromHex(publicB); // check for being on-curve
+        return b.multiply(normPrivateKeyToScalar(privateA)).toRawBytes(isCompressed);
+    }
+    // RFC6979: ensure ECDSA msg is X bytes and < N. RFC suggests optional truncating via bits2octets.
+    // FIPS 186-4 4.6 suggests the leftmost min(nBitLen, outLen) bits, which matches bits2int.
+    // bits2int can produce res>N, we can do mod(res, N) since the bitLen is the same.
+    // int2octets can't be used; pads small msgs with 0: unacceptatble for trunc as per RFC vectors
+    const bits2int = CURVE.bits2int ||
+        function (bytes) {
+            // For curves with nBitLength % 8 !== 0: bits2octets(bits2octets(m)) !== bits2octets(m)
+            // for some cases, since bytes.length * 8 is not actual bitLength.
+            const num = _utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE(bytes); // check for == u8 done here
+            const delta = bytes.length * 8 - CURVE.nBitLength; // truncate to nBitLength leftmost bits
+            return delta > 0 ? num >> BigInt(delta) : num;
+        };
+    const bits2int_modN = CURVE.bits2int_modN ||
+        function (bytes) {
+            return modN(bits2int(bytes)); // can't use bytesToNumberBE here
+        };
+    // NOTE: pads output with zero as per spec
+    const ORDER_MASK = _utils_js__WEBPACK_IMPORTED_MODULE_1__.bitMask(CURVE.nBitLength);
+    /**
+     * Converts to bytes. Checks if num in `[0..ORDER_MASK-1]` e.g.: `[0..2^256-1]`.
+     */
+    function int2octets(num) {
+        if (typeof num !== 'bigint')
+            throw new Error('bigint expected');
+        if (!(_0n <= num && num < ORDER_MASK))
+            throw new Error(`bigint expected < 2^${CURVE.nBitLength}`);
+        // works with order, can have different size than numToField!
+        return _utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE(num, CURVE.nByteLength);
+    }
+    // Steps A, D of RFC6979 3.2
+    // Creates RFC6979 seed; converts msg/privKey to numbers.
+    // Used only in sign, not in verify.
+    // NOTE: we cannot assume here that msgHash has same amount of bytes as curve order, this will be wrong at least for P521.
+    // Also it can be bigger for P224 + SHA256
+    function prepSig(msgHash, privateKey, opts = defaultSigOpts) {
+        if (['recovered', 'canonical'].some((k) => k in opts))
+            throw new Error('sign() legacy options not supported');
+        const { hash, randomBytes } = CURVE;
+        let { lowS, prehash, extraEntropy: ent } = opts; // generates low-s sigs by default
+        if (lowS == null)
+            lowS = true; // RFC6979 3.2: we skip step A, because we already provide hash
+        msgHash = (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('msgHash', msgHash);
+        if (prehash)
+            msgHash = (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('prehashed msgHash', hash(msgHash));
+        // We can't later call bits2octets, since nested bits2int is broken for curves
+        // with nBitLength % 8 !== 0. Because of that, we unwrap it here as int2octets call.
+        // const bits2octets = (bits) => int2octets(bits2int_modN(bits))
+        const h1int = bits2int_modN(msgHash);
+        const d = normPrivateKeyToScalar(privateKey); // validate private key, convert to bigint
+        const seedArgs = [int2octets(d), int2octets(h1int)];
+        // extraEntropy. RFC6979 3.6: additional k' (optional).
+        if (ent != null && ent !== false) {
+            // K = HMAC_K(V || 0x00 || int2octets(x) || bits2octets(h1) || k')
+            const e = ent === true ? randomBytes(Fp.BYTES) : ent; // generate random bytes OR pass as-is
+            seedArgs.push((0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('extraEntropy', e)); // check for being bytes
+        }
+        const seed = _utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes(...seedArgs); // Step D of RFC6979 3.2
+        const m = h1int; // NOTE: no need to call bits2int second time here, it is inside truncateHash!
+        // Converts signature params into point w r/s, checks result for validity.
+        function k2sig(kBytes) {
+            // RFC 6979 Section 3.2, step 3: k = bits2int(T)
+            const k = bits2int(kBytes); // Cannot use fields methods, since it is group element
+            if (!isWithinCurveOrder(k))
+                return; // Important: all mod() calls here must be done over N
+            const ik = invN(k); // k^-1 mod n
+            const q = Point.BASE.multiply(k).toAffine(); // q = Gk
+            const r = modN(q.x); // r = q.x mod n
+            if (r === _0n)
+                return;
+            // Can use scalar blinding b^-1(bm + bdr) where b ∈ [1,q−1] according to
+            // https://tches.iacr.org/index.php/TCHES/article/view/7337/6509. We've decided against it:
+            // a) dependency on CSPRNG b) 15% slowdown c) doesn't really help since bigints are not CT
+            const s = modN(ik * modN(m + r * d)); // Not using blinding here
+            if (s === _0n)
+                return;
+            let recovery = (q.x === r ? 0 : 2) | Number(q.y & _1n); // recovery bit (2 or 3, when q.x > n)
+            let normS = s;
+            if (lowS && isBiggerThanHalfOrder(s)) {
+                normS = normalizeS(s); // if lowS was passed, ensure s is always
+                recovery ^= 1; // // in the bottom half of N
+            }
+            return new Signature(r, normS, recovery); // use normS, not s
+        }
+        return { seed, k2sig };
+    }
+    const defaultSigOpts = { lowS: CURVE.lowS, prehash: false };
+    const defaultVerOpts = { lowS: CURVE.lowS, prehash: false };
+    /**
+     * Signs message hash with a private key.
+     * ```
+     * sign(m, d, k) where
+     *   (x, y) = G × k
+     *   r = x mod n
+     *   s = (m + dr)/k mod n
+     * ```
+     * @param msgHash NOT message. msg needs to be hashed to `msgHash`, or use `prehash`.
+     * @param privKey private key
+     * @param opts lowS for non-malleable sigs. extraEntropy for mixing randomness into k. prehash will hash first arg.
+     * @returns signature with recovery param
+     */
+    function sign(msgHash, privKey, opts = defaultSigOpts) {
+        const { seed, k2sig } = prepSig(msgHash, privKey, opts); // Steps A, D of RFC6979 3.2.
+        const C = CURVE;
+        const drbg = _utils_js__WEBPACK_IMPORTED_MODULE_1__.createHmacDrbg(C.hash.outputLen, C.nByteLength, C.hmac);
+        return drbg(seed, k2sig); // Steps B, C, D, E, F, G
+    }
+    // Enable precomputes. Slows down first publicKey computation by 20ms.
+    Point.BASE._setWindowSize(8);
+    // utils.precompute(8, ProjectivePoint.BASE)
+    /**
+     * Verifies a signature against message hash and public key.
+     * Rejects lowS signatures by default: to override,
+     * specify option `{lowS: false}`. Implements section 4.1.4 from https://www.secg.org/sec1-v2.pdf:
+     *
+     * ```
+     * verify(r, s, h, P) where
+     *   U1 = hs^-1 mod n
+     *   U2 = rs^-1 mod n
+     *   R = U1⋅G - U2⋅P
+     *   mod(R.x, n) == r
+     * ```
+     */
+    function verify(signature, msgHash, publicKey, opts = defaultVerOpts) {
+        const sg = signature;
+        msgHash = (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('msgHash', msgHash);
+        publicKey = (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('publicKey', publicKey);
+        if ('strict' in opts)
+            throw new Error('options.strict was renamed to lowS');
+        const { lowS, prehash } = opts;
+        let _sig = undefined;
+        let P;
+        try {
+            if (typeof sg === 'string' || _utils_js__WEBPACK_IMPORTED_MODULE_1__.isBytes(sg)) {
+                // Signature can be represented in 2 ways: compact (2*nByteLength) & DER (variable-length).
+                // Since DER can also be 2*nByteLength bytes, we check for it first.
+                try {
+                    _sig = Signature.fromDER(sg);
+                }
+                catch (derError) {
+                    if (!(derError instanceof DER.Err))
+                        throw derError;
+                    _sig = Signature.fromCompact(sg);
+                }
+            }
+            else if (typeof sg === 'object' && typeof sg.r === 'bigint' && typeof sg.s === 'bigint') {
+                const { r, s } = sg;
+                _sig = new Signature(r, s);
+            }
+            else {
+                throw new Error('PARSE');
+            }
+            P = Point.fromHex(publicKey);
+        }
+        catch (error) {
+            if (error.message === 'PARSE')
+                throw new Error(`signature must be Signature instance, Uint8Array or hex string`);
+            return false;
+        }
+        if (lowS && _sig.hasHighS())
+            return false;
+        if (prehash)
+            msgHash = CURVE.hash(msgHash);
+        const { r, s } = _sig;
+        const h = bits2int_modN(msgHash); // Cannot use fields methods, since it is group element
+        const is = invN(s); // s^-1
+        const u1 = modN(h * is); // u1 = hs^-1 mod n
+        const u2 = modN(r * is); // u2 = rs^-1 mod n
+        const R = Point.BASE.multiplyAndAddUnsafe(P, u1, u2)?.toAffine(); // R = u1⋅G + u2⋅P
+        if (!R)
+            return false;
+        const v = modN(R.x);
+        return v === r;
+    }
+    return {
+        CURVE,
+        getPublicKey,
+        getSharedSecret,
+        sign,
+        verify,
+        ProjectivePoint: Point,
+        Signature,
+        utils,
+    };
+}
+/**
+ * Implementation of the Shallue and van de Woestijne method for any weierstrass curve.
+ * TODO: check if there is a way to merge this with uvRatio in Edwards; move to modular.
+ * b = True and y = sqrt(u / v) if (u / v) is square in F, and
+ * b = False and y = sqrt(Z * (u / v)) otherwise.
+ * @param Fp
+ * @param Z
+ * @returns
+ */
+function SWUFpSqrtRatio(Fp, Z) {
+    // Generic implementation
+    const q = Fp.ORDER;
+    let l = _0n;
+    for (let o = q - _1n; o % _2n === _0n; o /= _2n)
+        l += _1n;
+    const c1 = l; // 1. c1, the largest integer such that 2^c1 divides q - 1.
+    // We need 2n ** c1 and 2n ** (c1-1). We can't use **; but we can use <<.
+    // 2n ** c1 == 2n << (c1-1)
+    const _2n_pow_c1_1 = _2n << (c1 - _1n - _1n);
+    const _2n_pow_c1 = _2n_pow_c1_1 * _2n;
+    const c2 = (q - _1n) / _2n_pow_c1; // 2. c2 = (q - 1) / (2^c1)  # Integer arithmetic
+    const c3 = (c2 - _1n) / _2n; // 3. c3 = (c2 - 1) / 2            # Integer arithmetic
+    const c4 = _2n_pow_c1 - _1n; // 4. c4 = 2^c1 - 1                # Integer arithmetic
+    const c5 = _2n_pow_c1_1; // 5. c5 = 2^(c1 - 1)                  # Integer arithmetic
+    const c6 = Fp.pow(Z, c2); // 6. c6 = Z^c2
+    const c7 = Fp.pow(Z, (c2 + _1n) / _2n); // 7. c7 = Z^((c2 + 1) / 2)
+    let sqrtRatio = (u, v) => {
+        let tv1 = c6; // 1. tv1 = c6
+        let tv2 = Fp.pow(v, c4); // 2. tv2 = v^c4
+        let tv3 = Fp.sqr(tv2); // 3. tv3 = tv2^2
+        tv3 = Fp.mul(tv3, v); // 4. tv3 = tv3 * v
+        let tv5 = Fp.mul(u, tv3); // 5. tv5 = u * tv3
+        tv5 = Fp.pow(tv5, c3); // 6. tv5 = tv5^c3
+        tv5 = Fp.mul(tv5, tv2); // 7. tv5 = tv5 * tv2
+        tv2 = Fp.mul(tv5, v); // 8. tv2 = tv5 * v
+        tv3 = Fp.mul(tv5, u); // 9. tv3 = tv5 * u
+        let tv4 = Fp.mul(tv3, tv2); // 10. tv4 = tv3 * tv2
+        tv5 = Fp.pow(tv4, c5); // 11. tv5 = tv4^c5
+        let isQR = Fp.eql(tv5, Fp.ONE); // 12. isQR = tv5 == 1
+        tv2 = Fp.mul(tv3, c7); // 13. tv2 = tv3 * c7
+        tv5 = Fp.mul(tv4, tv1); // 14. tv5 = tv4 * tv1
+        tv3 = Fp.cmov(tv2, tv3, isQR); // 15. tv3 = CMOV(tv2, tv3, isQR)
+        tv4 = Fp.cmov(tv5, tv4, isQR); // 16. tv4 = CMOV(tv5, tv4, isQR)
+        // 17. for i in (c1, c1 - 1, ..., 2):
+        for (let i = c1; i > _1n; i--) {
+            let tv5 = i - _2n; // 18.    tv5 = i - 2
+            tv5 = _2n << (tv5 - _1n); // 19.    tv5 = 2^tv5
+            let tvv5 = Fp.pow(tv4, tv5); // 20.    tv5 = tv4^tv5
+            const e1 = Fp.eql(tvv5, Fp.ONE); // 21.    e1 = tv5 == 1
+            tv2 = Fp.mul(tv3, tv1); // 22.    tv2 = tv3 * tv1
+            tv1 = Fp.mul(tv1, tv1); // 23.    tv1 = tv1 * tv1
+            tvv5 = Fp.mul(tv4, tv1); // 24.    tv5 = tv4 * tv1
+            tv3 = Fp.cmov(tv2, tv3, e1); // 25.    tv3 = CMOV(tv2, tv3, e1)
+            tv4 = Fp.cmov(tvv5, tv4, e1); // 26.    tv4 = CMOV(tv5, tv4, e1)
+        }
+        return { isValid: isQR, value: tv3 };
+    };
+    if (Fp.ORDER % _4n === _3n) {
+        // sqrt_ratio_3mod4(u, v)
+        const c1 = (Fp.ORDER - _3n) / _4n; // 1. c1 = (q - 3) / 4     # Integer arithmetic
+        const c2 = Fp.sqrt(Fp.neg(Z)); // 2. c2 = sqrt(-Z)
+        sqrtRatio = (u, v) => {
+            let tv1 = Fp.sqr(v); // 1. tv1 = v^2
+            const tv2 = Fp.mul(u, v); // 2. tv2 = u * v
+            tv1 = Fp.mul(tv1, tv2); // 3. tv1 = tv1 * tv2
+            let y1 = Fp.pow(tv1, c1); // 4. y1 = tv1^c1
+            y1 = Fp.mul(y1, tv2); // 5. y1 = y1 * tv2
+            const y2 = Fp.mul(y1, c2); // 6. y2 = y1 * c2
+            const tv3 = Fp.mul(Fp.sqr(y1), v); // 7. tv3 = y1^2; 8. tv3 = tv3 * v
+            const isQR = Fp.eql(tv3, u); // 9. isQR = tv3 == u
+            let y = Fp.cmov(y2, y1, isQR); // 10. y = CMOV(y2, y1, isQR)
+            return { isValid: isQR, value: y }; // 11. return (isQR, y) isQR ? y : y*c2
+        };
+    }
+    // No curves uses that
+    // if (Fp.ORDER % _8n === _5n) // sqrt_ratio_5mod8
+    return sqrtRatio;
+}
+/**
+ * Simplified Shallue-van de Woestijne-Ulas Method
+ * https://www.rfc-editor.org/rfc/rfc9380#section-6.6.2
+ */
+function mapToCurveSimpleSWU(Fp, opts) {
+    _modular_js__WEBPACK_IMPORTED_MODULE_2__.validateField(Fp);
+    if (!Fp.isValid(opts.A) || !Fp.isValid(opts.B) || !Fp.isValid(opts.Z))
+        throw new Error('mapToCurveSimpleSWU: invalid opts');
+    const sqrtRatio = SWUFpSqrtRatio(Fp, opts.Z);
+    if (!Fp.isOdd)
+        throw new Error('Fp.isOdd is not implemented!');
+    // Input: u, an element of F.
+    // Output: (x, y), a point on E.
+    return (u) => {
+        // prettier-ignore
+        let tv1, tv2, tv3, tv4, tv5, tv6, x, y;
+        tv1 = Fp.sqr(u); // 1.  tv1 = u^2
+        tv1 = Fp.mul(tv1, opts.Z); // 2.  tv1 = Z * tv1
+        tv2 = Fp.sqr(tv1); // 3.  tv2 = tv1^2
+        tv2 = Fp.add(tv2, tv1); // 4.  tv2 = tv2 + tv1
+        tv3 = Fp.add(tv2, Fp.ONE); // 5.  tv3 = tv2 + 1
+        tv3 = Fp.mul(tv3, opts.B); // 6.  tv3 = B * tv3
+        tv4 = Fp.cmov(opts.Z, Fp.neg(tv2), !Fp.eql(tv2, Fp.ZERO)); // 7.  tv4 = CMOV(Z, -tv2, tv2 != 0)
+        tv4 = Fp.mul(tv4, opts.A); // 8.  tv4 = A * tv4
+        tv2 = Fp.sqr(tv3); // 9.  tv2 = tv3^2
+        tv6 = Fp.sqr(tv4); // 10. tv6 = tv4^2
+        tv5 = Fp.mul(tv6, opts.A); // 11. tv5 = A * tv6
+        tv2 = Fp.add(tv2, tv5); // 12. tv2 = tv2 + tv5
+        tv2 = Fp.mul(tv2, tv3); // 13. tv2 = tv2 * tv3
+        tv6 = Fp.mul(tv6, tv4); // 14. tv6 = tv6 * tv4
+        tv5 = Fp.mul(tv6, opts.B); // 15. tv5 = B * tv6
+        tv2 = Fp.add(tv2, tv5); // 16. tv2 = tv2 + tv5
+        x = Fp.mul(tv1, tv3); // 17.   x = tv1 * tv3
+        const { isValid, value } = sqrtRatio(tv2, tv6); // 18. (is_gx1_square, y1) = sqrt_ratio(tv2, tv6)
+        y = Fp.mul(tv1, u); // 19.   y = tv1 * u  -> Z * u^3 * y1
+        y = Fp.mul(y, value); // 20.   y = y * y1
+        x = Fp.cmov(x, tv3, isValid); // 21.   x = CMOV(x, tv3, is_gx1_square)
+        y = Fp.cmov(y, value, isValid); // 22.   y = CMOV(y, y1, is_gx1_square)
+        const e1 = Fp.isOdd(u) === Fp.isOdd(y); // 23.  e1 = sgn0(u) == sgn0(y)
+        y = Fp.cmov(Fp.neg(y), y, e1); // 24.   y = CMOV(-y, y, e1)
+        x = Fp.div(x, tv4); // 25.   x = x / tv4
+        return { x, y };
+    };
+}
+//# sourceMappingURL=weierstrass.js.map
+
+/***/ }),
+
+/***/ "./node_modules/@noble/curves/esm/bls12-381.js":
+/*!*****************************************************!*\
+  !*** ./node_modules/@noble/curves/esm/bls12-381.js ***!
+  \*****************************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   bls12_381: () => (/* binding */ bls12_381)
+/* harmony export */ });
+/* harmony import */ var _noble_hashes_sha256__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! @noble/hashes/sha256 */ "./node_modules/@noble/hashes/esm/sha256.js");
+/* harmony import */ var _noble_hashes_utils__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! @noble/hashes/utils */ "./node_modules/@noble/hashes/esm/utils.js");
+/* harmony import */ var _abstract_bls_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./abstract/bls.js */ "./node_modules/@noble/curves/esm/abstract/bls.js");
+/* harmony import */ var _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./abstract/modular.js */ "./node_modules/@noble/curves/esm/abstract/modular.js");
+/* harmony import */ var _abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./abstract/utils.js */ "./node_modules/@noble/curves/esm/abstract/utils.js");
+/* harmony import */ var _abstract_weierstrass_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./abstract/weierstrass.js */ "./node_modules/@noble/curves/esm/abstract/weierstrass.js");
+/* harmony import */ var _abstract_hash_to_curve_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./abstract/hash-to-curve.js */ "./node_modules/@noble/curves/esm/abstract/hash-to-curve.js");
+/*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+// bls12-381 is pairing-friendly Barreto-Lynn-Scott elliptic curve construction allowing to:
+// - Construct zk-SNARKs at the 120-bit security
+// - Efficiently verify N aggregate signatures with 1 pairing and N ec additions:
+//   the Boneh-Lynn-Shacham signature scheme is orders of magnitude more efficient than Schnorr
+//
+// ### Summary
+// 1. BLS Relies on Bilinear Pairing (expensive)
+// 2. Private Keys: 32 bytes
+// 3. Public Keys: 48 bytes: 381 bit affine x coordinate, encoded into 48 big-endian bytes.
+// 4. Signatures: 96 bytes: two 381 bit integers (affine x coordinate), encoded into two 48 big-endian byte arrays.
+//     - The signature is a point on the G2 subgroup, which is defined over a finite field
+//     with elements twice as big as the G1 curve (G2 is over Fp2 rather than Fp. Fp2 is analogous to the complex numbers).
+// 5. The 12 stands for the Embedding degree.
+//
+// ### Formulas
+// - `P = pk x G` - public keys
+// - `S = pk x H(m)` - signing
+// - `e(P, H(m)) == e(G, S)` - verification using pairings
+// - `e(G, S) = e(G, SUM(n)(Si)) = MUL(n)(e(G, Si))` - signature aggregation
+//
+// ### Compatibility and notes
+// 1. It is compatible with Algorand, Chia, Dfinity, Ethereum, Filecoin, ZEC
+//    Filecoin uses little endian byte arrays for private keys - make sure to reverse byte order.
+// 2. Some projects use G2 for public keys and G1 for signatures. It's called "short signature"
+// 3. Curve security level is about 120 bits as per Barbulescu-Duquesne 2017
+//    https://hal.science/hal-01534101/file/main.pdf
+// 4. Compatible with specs:
+// [cfrg-pairing-friendly-curves-11](https://tools.ietf.org/html/draft-irtf-cfrg-pairing-friendly-curves-11),
+// [cfrg-bls-signature-05](https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-bls-signature-05),
+// [RFC 9380](https://www.rfc-editor.org/rfc/rfc9380).
+
+
+
+
+
+// Types
+
+
+// Be friendly to bad ECMAScript parsers by not using bigint literals
+// prettier-ignore
+const _0n = BigInt(0), _1n = BigInt(1), _2n = BigInt(2), _3n = BigInt(3), _4n = BigInt(4);
+// prettier-ignore
+const _8n = BigInt(8), _16n = BigInt(16);
+// CURVE FIELDS
+// Finite field over p.
+const Fp_raw = BigInt('0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab');
+const Fp = _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.Field(Fp_raw);
+// Finite field over r.
+// This particular field is not used anywhere in bls12-381, but it is still useful.
+const Fr = _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.Field(BigInt('0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001'));
+const Fp2Add = ({ c0, c1 }, { c0: r0, c1: r1 }) => ({
+    c0: Fp.add(c0, r0),
+    c1: Fp.add(c1, r1),
+});
+const Fp2Subtract = ({ c0, c1 }, { c0: r0, c1: r1 }) => ({
+    c0: Fp.sub(c0, r0),
+    c1: Fp.sub(c1, r1),
+});
+const Fp2Multiply = ({ c0, c1 }, rhs) => {
+    if (typeof rhs === 'bigint')
+        return { c0: Fp.mul(c0, rhs), c1: Fp.mul(c1, rhs) };
+    // (a+bi)(c+di) = (ac−bd) + (ad+bc)i
+    const { c0: r0, c1: r1 } = rhs;
+    let t1 = Fp.mul(c0, r0); // c0 * o0
+    let t2 = Fp.mul(c1, r1); // c1 * o1
+    // (T1 - T2) + ((c0 + c1) * (r0 + r1) - (T1 + T2))*i
+    const o0 = Fp.sub(t1, t2);
+    const o1 = Fp.sub(Fp.mul(Fp.add(c0, c1), Fp.add(r0, r1)), Fp.add(t1, t2));
+    return { c0: o0, c1: o1 };
+};
+const Fp2Square = ({ c0, c1 }) => {
+    const a = Fp.add(c0, c1);
+    const b = Fp.sub(c0, c1);
+    const c = Fp.add(c0, c0);
+    return { c0: Fp.mul(a, b), c1: Fp.mul(c, c1) };
+};
+// G2 is the order-q subgroup of E2(Fp²) : y² = x³+4(1+√−1),
+// where Fp2 is Fp[√−1]/(x2+1). #E2(Fp2 ) = h2q, where
+// G² - 1
+// h2q
+// NOTE: ORDER was wrong!
+const FP2_ORDER = Fp_raw * Fp_raw;
+const Fp2 = {
+    ORDER: FP2_ORDER,
+    BITS: (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitLen)(FP2_ORDER),
+    BYTES: Math.ceil((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitLen)(FP2_ORDER) / 8),
+    MASK: (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitMask)((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitLen)(FP2_ORDER)),
+    ZERO: { c0: Fp.ZERO, c1: Fp.ZERO },
+    ONE: { c0: Fp.ONE, c1: Fp.ZERO },
+    create: (num) => num,
+    isValid: ({ c0, c1 }) => typeof c0 === 'bigint' && typeof c1 === 'bigint',
+    is0: ({ c0, c1 }) => Fp.is0(c0) && Fp.is0(c1),
+    eql: ({ c0, c1 }, { c0: r0, c1: r1 }) => Fp.eql(c0, r0) && Fp.eql(c1, r1),
+    neg: ({ c0, c1 }) => ({ c0: Fp.neg(c0), c1: Fp.neg(c1) }),
+    pow: (num, power) => _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.FpPow(Fp2, num, power),
+    invertBatch: (nums) => _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.FpInvertBatch(Fp2, nums),
+    // Normalized
+    add: Fp2Add,
+    sub: Fp2Subtract,
+    mul: Fp2Multiply,
+    sqr: Fp2Square,
+    // NonNormalized stuff
+    addN: Fp2Add,
+    subN: Fp2Subtract,
+    mulN: Fp2Multiply,
+    sqrN: Fp2Square,
+    // Why inversion for bigint inside Fp instead of Fp2? it is even used in that context?
+    div: (lhs, rhs) => Fp2.mul(lhs, typeof rhs === 'bigint' ? Fp.inv(Fp.create(rhs)) : Fp2.inv(rhs)),
+    inv: ({ c0: a, c1: b }) => {
+        // We wish to find the multiplicative inverse of a nonzero
+        // element a + bu in Fp2. We leverage an identity
+        //
+        // (a + bu)(a - bu) = a² + b²
+        //
+        // which holds because u² = -1. This can be rewritten as
+        //
+        // (a + bu)(a - bu)/(a² + b²) = 1
+        //
+        // because a² + b² = 0 has no nonzero solutions for (a, b).
+        // This gives that (a - bu)/(a² + b²) is the inverse
+        // of (a + bu). Importantly, this can be computing using
+        // only a single inversion in Fp.
+        const factor = Fp.inv(Fp.create(a * a + b * b));
+        return { c0: Fp.mul(factor, Fp.create(a)), c1: Fp.mul(factor, Fp.create(-b)) };
+    },
+    sqrt: (num) => {
+        if (Fp2.eql(num, Fp2.ZERO))
+            return Fp2.ZERO; // Algo doesn't handles this case
+        // TODO: Optimize this line. It's extremely slow.
+        // Speeding this up would boost aggregateSignatures.
+        // https://eprint.iacr.org/2012/685.pdf applicable?
+        // https://github.com/zkcrypto/bls12_381/blob/080eaa74ec0e394377caa1ba302c8c121df08b07/src/fp2.rs#L250
+        // https://github.com/supranational/blst/blob/aae0c7d70b799ac269ff5edf29d8191dbd357876/src/exp2.c#L1
+        // Inspired by https://github.com/dalek-cryptography/curve25519-dalek/blob/17698df9d4c834204f83a3574143abacb4fc81a5/src/field.rs#L99
+        const candidateSqrt = Fp2.pow(num, (Fp2.ORDER + _8n) / _16n);
+        const check = Fp2.div(Fp2.sqr(candidateSqrt), num); // candidateSqrt.square().div(this);
+        const R = FP2_ROOTS_OF_UNITY;
+        const divisor = [R[0], R[2], R[4], R[6]].find((r) => Fp2.eql(r, check));
+        if (!divisor)
+            throw new Error('No root');
+        const index = R.indexOf(divisor);
+        const root = R[index / 2];
+        if (!root)
+            throw new Error('Invalid root');
+        const x1 = Fp2.div(candidateSqrt, root);
+        const x2 = Fp2.neg(x1);
+        const { re: re1, im: im1 } = Fp2.reim(x1);
+        const { re: re2, im: im2 } = Fp2.reim(x2);
+        if (im1 > im2 || (im1 === im2 && re1 > re2))
+            return x1;
+        return x2;
+    },
+    // Same as sgn0_m_eq_2 in RFC 9380
+    isOdd: (x) => {
+        const { re: x0, im: x1 } = Fp2.reim(x);
+        const sign_0 = x0 % _2n;
+        const zero_0 = x0 === _0n;
+        const sign_1 = x1 % _2n;
+        return BigInt(sign_0 || (zero_0 && sign_1)) == _1n;
+    },
+    // Bytes util
+    fromBytes(b) {
+        if (b.length !== Fp2.BYTES)
+            throw new Error(`fromBytes wrong length=${b.length}`);
+        return { c0: Fp.fromBytes(b.subarray(0, Fp.BYTES)), c1: Fp.fromBytes(b.subarray(Fp.BYTES)) };
+    },
+    toBytes: ({ c0, c1 }) => (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(Fp.toBytes(c0), Fp.toBytes(c1)),
+    cmov: ({ c0, c1 }, { c0: r0, c1: r1 }, c) => ({
+        c0: Fp.cmov(c0, r0, c),
+        c1: Fp.cmov(c1, r1, c),
+    }),
+    // Specific utils
+    // toString() {
+    //   return `Fp2(${this.c0} + ${this.c1}×i)`;
+    // }
+    reim: ({ c0, c1 }) => ({ re: c0, im: c1 }),
+    // multiply by u + 1
+    mulByNonresidue: ({ c0, c1 }) => ({ c0: Fp.sub(c0, c1), c1: Fp.add(c0, c1) }),
+    multiplyByB: ({ c0, c1 }) => {
+        let t0 = Fp.mul(c0, _4n); // 4 * c0
+        let t1 = Fp.mul(c1, _4n); // 4 * c1
+        // (T0-T1) + (T0+T1)*i
+        return { c0: Fp.sub(t0, t1), c1: Fp.add(t0, t1) };
+    },
+    fromBigTuple: (tuple) => {
+        if (tuple.length !== 2)
+            throw new Error('Invalid tuple');
+        const fps = tuple.map((n) => Fp.create(n));
+        return { c0: fps[0], c1: fps[1] };
+    },
+    frobeniusMap: ({ c0, c1 }, power) => ({
+        c0,
+        c1: Fp.mul(c1, FP2_FROBENIUS_COEFFICIENTS[power % 2]),
+    }),
+};
+// Finite extension field over irreducible polynominal.
+// Fp(u) / (u² - β) where β = -1
+const FP2_FROBENIUS_COEFFICIENTS = [
+    BigInt('0x1'),
+    BigInt('0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa'),
+].map((item) => Fp.create(item));
+// For Fp2 roots of unity.
+const rv1 = BigInt('0x6af0e0437ff400b6831e36d6bd17ffe48395dabc2d3435e77f76e17009241c5ee67992f72ec05f4c81084fbede3cc09');
+// const ev1 =
+//   BigInt('0x699be3b8c6870965e5bf892ad5d2cc7b0e85a117402dfd83b7f4a947e02d978498255a2aaec0ac627b5afbdf1bf1c90');
+// const ev2 =
+//   BigInt('0x8157cd83046453f5dd0972b6e3949e4288020b5b8a9cc99ca07e27089a2ce2436d965026adad3ef7baba37f2183e9b5');
+// const ev3 =
+//   BigInt('0xab1c2ffdd6c253ca155231eb3e71ba044fd562f6f72bc5bad5ec46a0b7a3b0247cf08ce6c6317f40edbc653a72dee17');
+// const ev4 =
+//   BigInt('0xaa404866706722864480885d68ad0ccac1967c7544b447873cc37e0181271e006df72162a3d3e0287bf597fbf7f8fc1');
+// Eighth roots of unity, used for computing square roots in Fp2.
+// To verify or re-calculate:
+// Array(8).fill(new Fp2([1n, 1n])).map((fp2, k) => fp2.pow(Fp2.ORDER * BigInt(k) / 8n))
+const FP2_ROOTS_OF_UNITY = [
+    [_1n, _0n],
+    [rv1, -rv1],
+    [_0n, _1n],
+    [rv1, rv1],
+    [-_1n, _0n],
+    [-rv1, rv1],
+    [_0n, -_1n],
+    [-rv1, -rv1],
+].map((pair) => Fp2.fromBigTuple(pair));
+const Fp6Add = ({ c0, c1, c2 }, { c0: r0, c1: r1, c2: r2 }) => ({
+    c0: Fp2.add(c0, r0),
+    c1: Fp2.add(c1, r1),
+    c2: Fp2.add(c2, r2),
+});
+const Fp6Subtract = ({ c0, c1, c2 }, { c0: r0, c1: r1, c2: r2 }) => ({
+    c0: Fp2.sub(c0, r0),
+    c1: Fp2.sub(c1, r1),
+    c2: Fp2.sub(c2, r2),
+});
+const Fp6Multiply = ({ c0, c1, c2 }, rhs) => {
+    if (typeof rhs === 'bigint') {
+        return {
+            c0: Fp2.mul(c0, rhs),
+            c1: Fp2.mul(c1, rhs),
+            c2: Fp2.mul(c2, rhs),
+        };
+    }
+    const { c0: r0, c1: r1, c2: r2 } = rhs;
+    const t0 = Fp2.mul(c0, r0); // c0 * o0
+    const t1 = Fp2.mul(c1, r1); // c1 * o1
+    const t2 = Fp2.mul(c2, r2); // c2 * o2
+    return {
+        // t0 + (c1 + c2) * (r1 * r2) - (T1 + T2) * (u + 1)
+        c0: Fp2.add(t0, Fp2.mulByNonresidue(Fp2.sub(Fp2.mul(Fp2.add(c1, c2), Fp2.add(r1, r2)), Fp2.add(t1, t2)))),
+        // (c0 + c1) * (r0 + r1) - (T0 + T1) + T2 * (u + 1)
+        c1: Fp2.add(Fp2.sub(Fp2.mul(Fp2.add(c0, c1), Fp2.add(r0, r1)), Fp2.add(t0, t1)), Fp2.mulByNonresidue(t2)),
+        // T1 + (c0 + c2) * (r0 + r2) - T0 + T2
+        c2: Fp2.sub(Fp2.add(t1, Fp2.mul(Fp2.add(c0, c2), Fp2.add(r0, r2))), Fp2.add(t0, t2)),
+    };
+};
+const Fp6Square = ({ c0, c1, c2 }) => {
+    let t0 = Fp2.sqr(c0); // c0²
+    let t1 = Fp2.mul(Fp2.mul(c0, c1), _2n); // 2 * c0 * c1
+    let t3 = Fp2.mul(Fp2.mul(c1, c2), _2n); // 2 * c1 * c2
+    let t4 = Fp2.sqr(c2); // c2²
+    return {
+        c0: Fp2.add(Fp2.mulByNonresidue(t3), t0), // T3 * (u + 1) + T0
+        c1: Fp2.add(Fp2.mulByNonresidue(t4), t1), // T4 * (u + 1) + T1
+        // T1 + (c0 - c1 + c2)² + T3 - T0 - T4
+        c2: Fp2.sub(Fp2.sub(Fp2.add(Fp2.add(t1, Fp2.sqr(Fp2.add(Fp2.sub(c0, c1), c2))), t3), t0), t4),
+    };
+};
+const Fp6 = {
+    ORDER: Fp2.ORDER, // TODO: unused, but need to verify
+    BITS: 3 * Fp2.BITS,
+    BYTES: 3 * Fp2.BYTES,
+    MASK: (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitMask)(3 * Fp2.BITS),
+    ZERO: { c0: Fp2.ZERO, c1: Fp2.ZERO, c2: Fp2.ZERO },
+    ONE: { c0: Fp2.ONE, c1: Fp2.ZERO, c2: Fp2.ZERO },
+    create: (num) => num,
+    isValid: ({ c0, c1, c2 }) => Fp2.isValid(c0) && Fp2.isValid(c1) && Fp2.isValid(c2),
+    is0: ({ c0, c1, c2 }) => Fp2.is0(c0) && Fp2.is0(c1) && Fp2.is0(c2),
+    neg: ({ c0, c1, c2 }) => ({ c0: Fp2.neg(c0), c1: Fp2.neg(c1), c2: Fp2.neg(c2) }),
+    eql: ({ c0, c1, c2 }, { c0: r0, c1: r1, c2: r2 }) => Fp2.eql(c0, r0) && Fp2.eql(c1, r1) && Fp2.eql(c2, r2),
+    sqrt: () => {
+        throw new Error('Not implemented');
+    },
+    // Do we need division by bigint at all? Should be done via order:
+    div: (lhs, rhs) => Fp6.mul(lhs, typeof rhs === 'bigint' ? Fp.inv(Fp.create(rhs)) : Fp6.inv(rhs)),
+    pow: (num, power) => _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.FpPow(Fp6, num, power),
+    invertBatch: (nums) => _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.FpInvertBatch(Fp6, nums),
+    // Normalized
+    add: Fp6Add,
+    sub: Fp6Subtract,
+    mul: Fp6Multiply,
+    sqr: Fp6Square,
+    // NonNormalized stuff
+    addN: Fp6Add,
+    subN: Fp6Subtract,
+    mulN: Fp6Multiply,
+    sqrN: Fp6Square,
+    inv: ({ c0, c1, c2 }) => {
+        let t0 = Fp2.sub(Fp2.sqr(c0), Fp2.mulByNonresidue(Fp2.mul(c2, c1))); // c0² - c2 * c1 * (u + 1)
+        let t1 = Fp2.sub(Fp2.mulByNonresidue(Fp2.sqr(c2)), Fp2.mul(c0, c1)); // c2² * (u + 1) - c0 * c1
+        let t2 = Fp2.sub(Fp2.sqr(c1), Fp2.mul(c0, c2)); // c1² - c0 * c2
+        // 1/(((c2 * T1 + c1 * T2) * v) + c0 * T0)
+        let t4 = Fp2.inv(Fp2.add(Fp2.mulByNonresidue(Fp2.add(Fp2.mul(c2, t1), Fp2.mul(c1, t2))), Fp2.mul(c0, t0)));
+        return { c0: Fp2.mul(t4, t0), c1: Fp2.mul(t4, t1), c2: Fp2.mul(t4, t2) };
+    },
+    // Bytes utils
+    fromBytes: (b) => {
+        if (b.length !== Fp6.BYTES)
+            throw new Error(`fromBytes wrong length=${b.length}`);
+        return {
+            c0: Fp2.fromBytes(b.subarray(0, Fp2.BYTES)),
+            c1: Fp2.fromBytes(b.subarray(Fp2.BYTES, 2 * Fp2.BYTES)),
+            c2: Fp2.fromBytes(b.subarray(2 * Fp2.BYTES)),
+        };
+    },
+    toBytes: ({ c0, c1, c2 }) => (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(Fp2.toBytes(c0), Fp2.toBytes(c1), Fp2.toBytes(c2)),
+    cmov: ({ c0, c1, c2 }, { c0: r0, c1: r1, c2: r2 }, c) => ({
+        c0: Fp2.cmov(c0, r0, c),
+        c1: Fp2.cmov(c1, r1, c),
+        c2: Fp2.cmov(c2, r2, c),
+    }),
+    // Utils
+    //   fromTriple(triple: [Fp2, Fp2, Fp2]) {
+    //     return new Fp6(...triple);
+    //   }
+    //   toString() {
+    //     return `Fp6(${this.c0} + ${this.c1} * v, ${this.c2} * v^2)`;
+    //   }
+    fromBigSix: (t) => {
+        if (!Array.isArray(t) || t.length !== 6)
+            throw new Error('Invalid Fp6 usage');
+        return {
+            c0: Fp2.fromBigTuple(t.slice(0, 2)),
+            c1: Fp2.fromBigTuple(t.slice(2, 4)),
+            c2: Fp2.fromBigTuple(t.slice(4, 6)),
+        };
+    },
+    frobeniusMap: ({ c0, c1, c2 }, power) => ({
+        c0: Fp2.frobeniusMap(c0, power),
+        c1: Fp2.mul(Fp2.frobeniusMap(c1, power), FP6_FROBENIUS_COEFFICIENTS_1[power % 6]),
+        c2: Fp2.mul(Fp2.frobeniusMap(c2, power), FP6_FROBENIUS_COEFFICIENTS_2[power % 6]),
+    }),
+    mulByNonresidue: ({ c0, c1, c2 }) => ({ c0: Fp2.mulByNonresidue(c2), c1: c0, c2: c1 }),
+    // Sparse multiplication
+    multiplyBy1: ({ c0, c1, c2 }, b1) => ({
+        c0: Fp2.mulByNonresidue(Fp2.mul(c2, b1)),
+        c1: Fp2.mul(c0, b1),
+        c2: Fp2.mul(c1, b1),
+    }),
+    // Sparse multiplication
+    multiplyBy01({ c0, c1, c2 }, b0, b1) {
+        let t0 = Fp2.mul(c0, b0); // c0 * b0
+        let t1 = Fp2.mul(c1, b1); // c1 * b1
+        return {
+            // ((c1 + c2) * b1 - T1) * (u + 1) + T0
+            c0: Fp2.add(Fp2.mulByNonresidue(Fp2.sub(Fp2.mul(Fp2.add(c1, c2), b1), t1)), t0),
+            // (b0 + b1) * (c0 + c1) - T0 - T1
+            c1: Fp2.sub(Fp2.sub(Fp2.mul(Fp2.add(b0, b1), Fp2.add(c0, c1)), t0), t1),
+            // (c0 + c2) * b0 - T0 + T1
+            c2: Fp2.add(Fp2.sub(Fp2.mul(Fp2.add(c0, c2), b0), t0), t1),
+        };
+    },
+    multiplyByFp2: ({ c0, c1, c2 }, rhs) => ({
+        c0: Fp2.mul(c0, rhs),
+        c1: Fp2.mul(c1, rhs),
+        c2: Fp2.mul(c2, rhs),
+    }),
+};
+const FP6_FROBENIUS_COEFFICIENTS_1 = [
+    [BigInt('0x1'), BigInt('0x0')],
+    [
+        BigInt('0x0'),
+        BigInt('0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaac'),
+    ],
+    [
+        BigInt('0x00000000000000005f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffefffe'),
+        BigInt('0x0'),
+    ],
+    [BigInt('0x0'), BigInt('0x1')],
+    [
+        BigInt('0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaac'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x0'),
+        BigInt('0x00000000000000005f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffefffe'),
+    ],
+].map((pair) => Fp2.fromBigTuple(pair));
+const FP6_FROBENIUS_COEFFICIENTS_2 = [
+    [BigInt('0x1'), BigInt('0x0')],
+    [
+        BigInt('0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaad'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaac'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x00000000000000005f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffefffe'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x00000000000000005f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffeffff'),
+        BigInt('0x0'),
+    ],
+].map((pair) => Fp2.fromBigTuple(pair));
+// The BLS parameter x for BLS12-381
+const BLS_X = BigInt('0xd201000000010000');
+const BLS_X_LEN = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitLen)(BLS_X);
+const Fp12Add = ({ c0, c1 }, { c0: r0, c1: r1 }) => ({
+    c0: Fp6.add(c0, r0),
+    c1: Fp6.add(c1, r1),
+});
+const Fp12Subtract = ({ c0, c1 }, { c0: r0, c1: r1 }) => ({
+    c0: Fp6.sub(c0, r0),
+    c1: Fp6.sub(c1, r1),
+});
+const Fp12Multiply = ({ c0, c1 }, rhs) => {
+    if (typeof rhs === 'bigint')
+        return { c0: Fp6.mul(c0, rhs), c1: Fp6.mul(c1, rhs) };
+    let { c0: r0, c1: r1 } = rhs;
+    let t1 = Fp6.mul(c0, r0); // c0 * r0
+    let t2 = Fp6.mul(c1, r1); // c1 * r1
+    return {
+        c0: Fp6.add(t1, Fp6.mulByNonresidue(t2)), // T1 + T2 * v
+        // (c0 + c1) * (r0 + r1) - (T1 + T2)
+        c1: Fp6.sub(Fp6.mul(Fp6.add(c0, c1), Fp6.add(r0, r1)), Fp6.add(t1, t2)),
+    };
+};
+const Fp12Square = ({ c0, c1 }) => {
+    let ab = Fp6.mul(c0, c1); // c0 * c1
+    return {
+        // (c1 * v + c0) * (c0 + c1) - AB - AB * v
+        c0: Fp6.sub(Fp6.sub(Fp6.mul(Fp6.add(Fp6.mulByNonresidue(c1), c0), Fp6.add(c0, c1)), ab), Fp6.mulByNonresidue(ab)),
+        c1: Fp6.add(ab, ab),
+    }; // AB + AB
+};
+function Fp4Square(a, b) {
+    const a2 = Fp2.sqr(a);
+    const b2 = Fp2.sqr(b);
+    return {
+        first: Fp2.add(Fp2.mulByNonresidue(b2), a2), // b² * Nonresidue + a²
+        second: Fp2.sub(Fp2.sub(Fp2.sqr(Fp2.add(a, b)), a2), b2), // (a + b)² - a² - b²
+    };
+}
+const Fp12 = {
+    ORDER: Fp2.ORDER, // TODO: unused, but need to verify
+    BITS: 2 * Fp2.BITS,
+    BYTES: 2 * Fp2.BYTES,
+    MASK: (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitMask)(2 * Fp2.BITS),
+    ZERO: { c0: Fp6.ZERO, c1: Fp6.ZERO },
+    ONE: { c0: Fp6.ONE, c1: Fp6.ZERO },
+    create: (num) => num,
+    isValid: ({ c0, c1 }) => Fp6.isValid(c0) && Fp6.isValid(c1),
+    is0: ({ c0, c1 }) => Fp6.is0(c0) && Fp6.is0(c1),
+    neg: ({ c0, c1 }) => ({ c0: Fp6.neg(c0), c1: Fp6.neg(c1) }),
+    eql: ({ c0, c1 }, { c0: r0, c1: r1 }) => Fp6.eql(c0, r0) && Fp6.eql(c1, r1),
+    sqrt: () => {
+        throw new Error('Not implemented');
+    },
+    inv: ({ c0, c1 }) => {
+        let t = Fp6.inv(Fp6.sub(Fp6.sqr(c0), Fp6.mulByNonresidue(Fp6.sqr(c1)))); // 1 / (c0² - c1² * v)
+        return { c0: Fp6.mul(c0, t), c1: Fp6.neg(Fp6.mul(c1, t)) }; // ((C0 * T) * T) + (-C1 * T) * w
+    },
+    div: (lhs, rhs) => Fp12.mul(lhs, typeof rhs === 'bigint' ? Fp.inv(Fp.create(rhs)) : Fp12.inv(rhs)),
+    pow: (num, power) => _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.FpPow(Fp12, num, power),
+    invertBatch: (nums) => _abstract_modular_js__WEBPACK_IMPORTED_MODULE_0__.FpInvertBatch(Fp12, nums),
+    // Normalized
+    add: Fp12Add,
+    sub: Fp12Subtract,
+    mul: Fp12Multiply,
+    sqr: Fp12Square,
+    // NonNormalized stuff
+    addN: Fp12Add,
+    subN: Fp12Subtract,
+    mulN: Fp12Multiply,
+    sqrN: Fp12Square,
+    // Bytes utils
+    fromBytes: (b) => {
+        if (b.length !== Fp12.BYTES)
+            throw new Error(`fromBytes wrong length=${b.length}`);
+        return {
+            c0: Fp6.fromBytes(b.subarray(0, Fp6.BYTES)),
+            c1: Fp6.fromBytes(b.subarray(Fp6.BYTES)),
+        };
+    },
+    toBytes: ({ c0, c1 }) => (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(Fp6.toBytes(c0), Fp6.toBytes(c1)),
+    cmov: ({ c0, c1 }, { c0: r0, c1: r1 }, c) => ({
+        c0: Fp6.cmov(c0, r0, c),
+        c1: Fp6.cmov(c1, r1, c),
+    }),
+    // Utils
+    // toString() {
+    //   return `Fp12(${this.c0} + ${this.c1} * w)`;
+    // },
+    // fromTuple(c: [Fp6, Fp6]) {
+    //   return new Fp12(...c);
+    // }
+    fromBigTwelve: (t) => ({
+        c0: Fp6.fromBigSix(t.slice(0, 6)),
+        c1: Fp6.fromBigSix(t.slice(6, 12)),
+    }),
+    // Raises to q**i -th power
+    frobeniusMap(lhs, power) {
+        const r0 = Fp6.frobeniusMap(lhs.c0, power);
+        const { c0, c1, c2 } = Fp6.frobeniusMap(lhs.c1, power);
+        const coeff = FP12_FROBENIUS_COEFFICIENTS[power % 12];
+        return {
+            c0: r0,
+            c1: Fp6.create({
+                c0: Fp2.mul(c0, coeff),
+                c1: Fp2.mul(c1, coeff),
+                c2: Fp2.mul(c2, coeff),
+            }),
+        };
+    },
+    // Sparse multiplication
+    multiplyBy014: ({ c0, c1 }, o0, o1, o4) => {
+        let t0 = Fp6.multiplyBy01(c0, o0, o1);
+        let t1 = Fp6.multiplyBy1(c1, o4);
+        return {
+            c0: Fp6.add(Fp6.mulByNonresidue(t1), t0), // T1 * v + T0
+            // (c1 + c0) * [o0, o1+o4] - T0 - T1
+            c1: Fp6.sub(Fp6.sub(Fp6.multiplyBy01(Fp6.add(c1, c0), o0, Fp2.add(o1, o4)), t0), t1),
+        };
+    },
+    multiplyByFp2: ({ c0, c1 }, rhs) => ({
+        c0: Fp6.multiplyByFp2(c0, rhs),
+        c1: Fp6.multiplyByFp2(c1, rhs),
+    }),
+    conjugate: ({ c0, c1 }) => ({ c0, c1: Fp6.neg(c1) }),
+    // A cyclotomic group is a subgroup of Fp^n defined by
+    //   GΦₙ(p) = {α ∈ Fpⁿ : α^Φₙ(p) = 1}
+    // The result of any pairing is in a cyclotomic subgroup
+    // https://eprint.iacr.org/2009/565.pdf
+    _cyclotomicSquare: ({ c0, c1 }) => {
+        const { c0: c0c0, c1: c0c1, c2: c0c2 } = c0;
+        const { c0: c1c0, c1: c1c1, c2: c1c2 } = c1;
+        const { first: t3, second: t4 } = Fp4Square(c0c0, c1c1);
+        const { first: t5, second: t6 } = Fp4Square(c1c0, c0c2);
+        const { first: t7, second: t8 } = Fp4Square(c0c1, c1c2);
+        let t9 = Fp2.mulByNonresidue(t8); // T8 * (u + 1)
+        return {
+            c0: Fp6.create({
+                c0: Fp2.add(Fp2.mul(Fp2.sub(t3, c0c0), _2n), t3), // 2 * (T3 - c0c0)  + T3
+                c1: Fp2.add(Fp2.mul(Fp2.sub(t5, c0c1), _2n), t5), // 2 * (T5 - c0c1)  + T5
+                c2: Fp2.add(Fp2.mul(Fp2.sub(t7, c0c2), _2n), t7),
+            }), // 2 * (T7 - c0c2)  + T7
+            c1: Fp6.create({
+                c0: Fp2.add(Fp2.mul(Fp2.add(t9, c1c0), _2n), t9), // 2 * (T9 + c1c0) + T9
+                c1: Fp2.add(Fp2.mul(Fp2.add(t4, c1c1), _2n), t4), // 2 * (T4 + c1c1) + T4
+                c2: Fp2.add(Fp2.mul(Fp2.add(t6, c1c2), _2n), t6),
+            }),
+        }; // 2 * (T6 + c1c2) + T6
+    },
+    _cyclotomicExp(num, n) {
+        let z = Fp12.ONE;
+        for (let i = BLS_X_LEN - 1; i >= 0; i--) {
+            z = Fp12._cyclotomicSquare(z);
+            if ((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bitGet)(n, i))
+                z = Fp12.mul(z, num);
+        }
+        return z;
+    },
+    // https://eprint.iacr.org/2010/354.pdf
+    // https://eprint.iacr.org/2009/565.pdf
+    finalExponentiate: (num) => {
+        const x = BLS_X;
+        // this^(q⁶) / this
+        const t0 = Fp12.div(Fp12.frobeniusMap(num, 6), num);
+        // t0^(q²) * t0
+        const t1 = Fp12.mul(Fp12.frobeniusMap(t0, 2), t0);
+        const t2 = Fp12.conjugate(Fp12._cyclotomicExp(t1, x));
+        const t3 = Fp12.mul(Fp12.conjugate(Fp12._cyclotomicSquare(t1)), t2);
+        const t4 = Fp12.conjugate(Fp12._cyclotomicExp(t3, x));
+        const t5 = Fp12.conjugate(Fp12._cyclotomicExp(t4, x));
+        const t6 = Fp12.mul(Fp12.conjugate(Fp12._cyclotomicExp(t5, x)), Fp12._cyclotomicSquare(t2));
+        const t7 = Fp12.conjugate(Fp12._cyclotomicExp(t6, x));
+        const t2_t5_pow_q2 = Fp12.frobeniusMap(Fp12.mul(t2, t5), 2);
+        const t4_t1_pow_q3 = Fp12.frobeniusMap(Fp12.mul(t4, t1), 3);
+        const t6_t1c_pow_q1 = Fp12.frobeniusMap(Fp12.mul(t6, Fp12.conjugate(t1)), 1);
+        const t7_t3c_t1 = Fp12.mul(Fp12.mul(t7, Fp12.conjugate(t3)), t1);
+        // (t2 * t5)^(q²) * (t4 * t1)^(q³) * (t6 * t1.conj)^(q^1) * t7 * t3.conj * t1
+        return Fp12.mul(Fp12.mul(Fp12.mul(t2_t5_pow_q2, t4_t1_pow_q3), t6_t1c_pow_q1), t7_t3c_t1);
+    },
+};
+const FP12_FROBENIUS_COEFFICIENTS = [
+    [BigInt('0x1'), BigInt('0x0')],
+    [
+        BigInt('0x1904d3bf02bb0667c231beb4202c0d1f0fd603fd3cbd5f4f7b2443d784bab9c4f67ea53d63e7813d8d0775ed92235fb8'),
+        BigInt('0x00fc3e2b36c4e03288e9e902231f9fb854a14787b6c7b36fec0c8ec971f63c5f282d5ac14d6c7ec22cf78a126ddc4af3'),
+    ],
+    [
+        BigInt('0x00000000000000005f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffeffff'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x135203e60180a68ee2e9c448d77a2cd91c3dedd930b1cf60ef396489f61eb45e304466cf3e67fa0af1ee7b04121bdea2'),
+        BigInt('0x06af0e0437ff400b6831e36d6bd17ffe48395dabc2d3435e77f76e17009241c5ee67992f72ec05f4c81084fbede3cc09'),
+    ],
+    [
+        BigInt('0x00000000000000005f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffefffe'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x144e4211384586c16bd3ad4afa99cc9170df3560e77982d0db45f3536814f0bd5871c1908bd478cd1ee605167ff82995'),
+        BigInt('0x05b2cfd9013a5fd8df47fa6b48b1e045f39816240c0b8fee8beadf4d8e9c0566c63a3e6e257f87329b18fae980078116'),
+    ],
+    [
+        BigInt('0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x00fc3e2b36c4e03288e9e902231f9fb854a14787b6c7b36fec0c8ec971f63c5f282d5ac14d6c7ec22cf78a126ddc4af3'),
+        BigInt('0x1904d3bf02bb0667c231beb4202c0d1f0fd603fd3cbd5f4f7b2443d784bab9c4f67ea53d63e7813d8d0775ed92235fb8'),
+    ],
+    [
+        BigInt('0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaac'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x06af0e0437ff400b6831e36d6bd17ffe48395dabc2d3435e77f76e17009241c5ee67992f72ec05f4c81084fbede3cc09'),
+        BigInt('0x135203e60180a68ee2e9c448d77a2cd91c3dedd930b1cf60ef396489f61eb45e304466cf3e67fa0af1ee7b04121bdea2'),
+    ],
+    [
+        BigInt('0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaad'),
+        BigInt('0x0'),
+    ],
+    [
+        BigInt('0x05b2cfd9013a5fd8df47fa6b48b1e045f39816240c0b8fee8beadf4d8e9c0566c63a3e6e257f87329b18fae980078116'),
+        BigInt('0x144e4211384586c16bd3ad4afa99cc9170df3560e77982d0db45f3536814f0bd5871c1908bd478cd1ee605167ff82995'),
+    ],
+].map((n) => Fp2.fromBigTuple(n));
+// END OF CURVE FIELDS
+// HashToCurve
+// 3-isogeny map from E' to E https://www.rfc-editor.org/rfc/rfc9380#appendix-E.3
+const isogenyMapG2 = (0,_abstract_hash_to_curve_js__WEBPACK_IMPORTED_MODULE_2__.isogenyMap)(Fp2, [
+    // xNum
+    [
+        [
+            '0x5c759507e8e333ebb5b7a9a47d7ed8532c52d39fd3a042a88b58423c50ae15d5c2638e343d9c71c6238aaaaaaaa97d6',
+            '0x5c759507e8e333ebb5b7a9a47d7ed8532c52d39fd3a042a88b58423c50ae15d5c2638e343d9c71c6238aaaaaaaa97d6',
+        ],
+        [
+            '0x0',
+            '0x11560bf17baa99bc32126fced787c88f984f87adf7ae0c7f9a208c6b4f20a4181472aaa9cb8d555526a9ffffffffc71a',
+        ],
+        [
+            '0x11560bf17baa99bc32126fced787c88f984f87adf7ae0c7f9a208c6b4f20a4181472aaa9cb8d555526a9ffffffffc71e',
+            '0x8ab05f8bdd54cde190937e76bc3e447cc27c3d6fbd7063fcd104635a790520c0a395554e5c6aaaa9354ffffffffe38d',
+        ],
+        [
+            '0x171d6541fa38ccfaed6dea691f5fb614cb14b4e7f4e810aa22d6108f142b85757098e38d0f671c7188e2aaaaaaaa5ed1',
+            '0x0',
+        ],
+    ],
+    // xDen
+    [
+        [
+            '0x0',
+            '0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaa63',
+        ],
+        [
+            '0xc',
+            '0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaa9f',
+        ],
+        ['0x1', '0x0'], // LAST 1
+    ],
+    // yNum
+    [
+        [
+            '0x1530477c7ab4113b59a4c18b076d11930f7da5d4a07f649bf54439d87d27e500fc8c25ebf8c92f6812cfc71c71c6d706',
+            '0x1530477c7ab4113b59a4c18b076d11930f7da5d4a07f649bf54439d87d27e500fc8c25ebf8c92f6812cfc71c71c6d706',
+        ],
+        [
+            '0x0',
+            '0x5c759507e8e333ebb5b7a9a47d7ed8532c52d39fd3a042a88b58423c50ae15d5c2638e343d9c71c6238aaaaaaaa97be',
+        ],
+        [
+            '0x11560bf17baa99bc32126fced787c88f984f87adf7ae0c7f9a208c6b4f20a4181472aaa9cb8d555526a9ffffffffc71c',
+            '0x8ab05f8bdd54cde190937e76bc3e447cc27c3d6fbd7063fcd104635a790520c0a395554e5c6aaaa9354ffffffffe38f',
+        ],
+        [
+            '0x124c9ad43b6cf79bfbf7043de3811ad0761b0f37a1e26286b0e977c69aa274524e79097a56dc4bd9e1b371c71c718b10',
+            '0x0',
+        ],
+    ],
+    // yDen
+    [
+        [
+            '0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffa8fb',
+            '0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffa8fb',
+        ],
+        [
+            '0x0',
+            '0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffa9d3',
+        ],
+        [
+            '0x12',
+            '0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaa99',
+        ],
+        ['0x1', '0x0'], // LAST 1
+    ],
+].map((i) => i.map((pair) => Fp2.fromBigTuple(pair.map(BigInt)))));
+// 11-isogeny map from E' to E
+const isogenyMapG1 = (0,_abstract_hash_to_curve_js__WEBPACK_IMPORTED_MODULE_2__.isogenyMap)(Fp, [
+    // xNum
+    [
+        '0x11a05f2b1e833340b809101dd99815856b303e88a2d7005ff2627b56cdb4e2c85610c2d5f2e62d6eaeac1662734649b7',
+        '0x17294ed3e943ab2f0588bab22147a81c7c17e75b2f6a8417f565e33c70d1e86b4838f2a6f318c356e834eef1b3cb83bb',
+        '0xd54005db97678ec1d1048c5d10a9a1bce032473295983e56878e501ec68e25c958c3e3d2a09729fe0179f9dac9edcb0',
+        '0x1778e7166fcc6db74e0609d307e55412d7f5e4656a8dbf25f1b33289f1b330835336e25ce3107193c5b388641d9b6861',
+        '0xe99726a3199f4436642b4b3e4118e5499db995a1257fb3f086eeb65982fac18985a286f301e77c451154ce9ac8895d9',
+        '0x1630c3250d7313ff01d1201bf7a74ab5db3cb17dd952799b9ed3ab9097e68f90a0870d2dcae73d19cd13c1c66f652983',
+        '0xd6ed6553fe44d296a3726c38ae652bfb11586264f0f8ce19008e218f9c86b2a8da25128c1052ecaddd7f225a139ed84',
+        '0x17b81e7701abdbe2e8743884d1117e53356de5ab275b4db1a682c62ef0f2753339b7c8f8c8f475af9ccb5618e3f0c88e',
+        '0x80d3cf1f9a78fc47b90b33563be990dc43b756ce79f5574a2c596c928c5d1de4fa295f296b74e956d71986a8497e317',
+        '0x169b1f8e1bcfa7c42e0c37515d138f22dd2ecb803a0c5c99676314baf4bb1b7fa3190b2edc0327797f241067be390c9e',
+        '0x10321da079ce07e272d8ec09d2565b0dfa7dccdde6787f96d50af36003b14866f69b771f8c285decca67df3f1605fb7b',
+        '0x6e08c248e260e70bd1e962381edee3d31d79d7e22c837bc23c0bf1bc24c6b68c24b1b80b64d391fa9c8ba2e8ba2d229',
+    ],
+    // xDen
+    [
+        '0x8ca8d548cff19ae18b2e62f4bd3fa6f01d5ef4ba35b48ba9c9588617fc8ac62b558d681be343df8993cf9fa40d21b1c',
+        '0x12561a5deb559c4348b4711298e536367041e8ca0cf0800c0126c2588c48bf5713daa8846cb026e9e5c8276ec82b3bff',
+        '0xb2962fe57a3225e8137e629bff2991f6f89416f5a718cd1fca64e00b11aceacd6a3d0967c94fedcfcc239ba5cb83e19',
+        '0x3425581a58ae2fec83aafef7c40eb545b08243f16b1655154cca8abc28d6fd04976d5243eecf5c4130de8938dc62cd8',
+        '0x13a8e162022914a80a6f1d5f43e7a07dffdfc759a12062bb8d6b44e833b306da9bd29ba81f35781d539d395b3532a21e',
+        '0xe7355f8e4e667b955390f7f0506c6e9395735e9ce9cad4d0a43bcef24b8982f7400d24bc4228f11c02df9a29f6304a5',
+        '0x772caacf16936190f3e0c63e0596721570f5799af53a1894e2e073062aede9cea73b3538f0de06cec2574496ee84a3a',
+        '0x14a7ac2a9d64a8b230b3f5b074cf01996e7f63c21bca68a81996e1cdf9822c580fa5b9489d11e2d311f7d99bbdcc5a5e',
+        '0xa10ecf6ada54f825e920b3dafc7a3cce07f8d1d7161366b74100da67f39883503826692abba43704776ec3a79a1d641',
+        '0x95fc13ab9e92ad4476d6e3eb3a56680f682b4ee96f7d03776df533978f31c1593174e4b4b7865002d6384d168ecdd0a',
+        '0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001', // LAST 1
+    ],
+    // yNum
+    [
+        '0x90d97c81ba24ee0259d1f094980dcfa11ad138e48a869522b52af6c956543d3cd0c7aee9b3ba3c2be9845719707bb33',
+        '0x134996a104ee5811d51036d776fb46831223e96c254f383d0f906343eb67ad34d6c56711962fa8bfe097e75a2e41c696',
+        '0xcc786baa966e66f4a384c86a3b49942552e2d658a31ce2c344be4b91400da7d26d521628b00523b8dfe240c72de1f6',
+        '0x1f86376e8981c217898751ad8746757d42aa7b90eeb791c09e4a3ec03251cf9de405aba9ec61deca6355c77b0e5f4cb',
+        '0x8cc03fdefe0ff135caf4fe2a21529c4195536fbe3ce50b879833fd221351adc2ee7f8dc099040a841b6daecf2e8fedb',
+        '0x16603fca40634b6a2211e11db8f0a6a074a7d0d4afadb7bd76505c3d3ad5544e203f6326c95a807299b23ab13633a5f0',
+        '0x4ab0b9bcfac1bbcb2c977d027796b3ce75bb8ca2be184cb5231413c4d634f3747a87ac2460f415ec961f8855fe9d6f2',
+        '0x987c8d5333ab86fde9926bd2ca6c674170a05bfe3bdd81ffd038da6c26c842642f64550fedfe935a15e4ca31870fb29',
+        '0x9fc4018bd96684be88c9e221e4da1bb8f3abd16679dc26c1e8b6e6a1f20cabe69d65201c78607a360370e577bdba587',
+        '0xe1bba7a1186bdb5223abde7ada14a23c42a0ca7915af6fe06985e7ed1e4d43b9b3f7055dd4eba6f2bafaaebca731c30',
+        '0x19713e47937cd1be0dfd0b8f1d43fb93cd2fcbcb6caf493fd1183e416389e61031bf3a5cce3fbafce813711ad011c132',
+        '0x18b46a908f36f6deb918c143fed2edcc523559b8aaf0c2462e6bfe7f911f643249d9cdf41b44d606ce07c8a4d0074d8e',
+        '0xb182cac101b9399d155096004f53f447aa7b12a3426b08ec02710e807b4633f06c851c1919211f20d4c04f00b971ef8',
+        '0x245a394ad1eca9b72fc00ae7be315dc757b3b080d4c158013e6632d3c40659cc6cf90ad1c232a6442d9d3f5db980133',
+        '0x5c129645e44cf1102a159f748c4a3fc5e673d81d7e86568d9ab0f5d396a7ce46ba1049b6579afb7866b1e715475224b',
+        '0x15e6be4e990f03ce4ea50b3b42df2eb5cb181d8f84965a3957add4fa95af01b2b665027efec01c7704b456be69c8b604',
+    ],
+    // yDen
+    [
+        '0x16112c4c3a9c98b252181140fad0eae9601a6de578980be6eec3232b5be72e7a07f3688ef60c206d01479253b03663c1',
+        '0x1962d75c2381201e1a0cbd6c43c348b885c84ff731c4d59ca4a10356f453e01f78a4260763529e3532f6102c2e49a03d',
+        '0x58df3306640da276faaae7d6e8eb15778c4855551ae7f310c35a5dd279cd2eca6757cd636f96f891e2538b53dbf67f2',
+        '0x16b7d288798e5395f20d23bf89edb4d1d115c5dbddbcd30e123da489e726af41727364f2c28297ada8d26d98445f5416',
+        '0xbe0e079545f43e4b00cc912f8228ddcc6d19c9f0f69bbb0542eda0fc9dec916a20b15dc0fd2ededda39142311a5001d',
+        '0x8d9e5297186db2d9fb266eaac783182b70152c65550d881c5ecd87b6f0f5a6449f38db9dfa9cce202c6477faaf9b7ac',
+        '0x166007c08a99db2fc3ba8734ace9824b5eecfdfa8d0cf8ef5dd365bc400a0051d5fa9c01a58b1fb93d1a1399126a775c',
+        '0x16a3ef08be3ea7ea03bcddfabba6ff6ee5a4375efa1f4fd7feb34fd206357132b920f5b00801dee460ee415a15812ed9',
+        '0x1866c8ed336c61231a1be54fd1d74cc4f9fb0ce4c6af5920abc5750c4bf39b4852cfe2f7bb9248836b233d9d55535d4a',
+        '0x167a55cda70a6e1cea820597d94a84903216f763e13d87bb5308592e7ea7d4fbc7385ea3d529b35e346ef48bb8913f55',
+        '0x4d2f259eea405bd48f010a01ad2911d9c6dd039bb61a6290e591b36e636a5c871a5c29f4f83060400f8b49cba8f6aa8',
+        '0xaccbb67481d033ff5852c1e48c50c477f94ff8aefce42d28c0f9a88cea7913516f968986f7ebbea9684b529e2561092',
+        '0xad6b9514c767fe3c3613144b45f1496543346d98adf02267d5ceef9a00d9b8693000763e3b90ac11e99b138573345cc',
+        '0x2660400eb2e4f3b628bdd0d53cd76f2bf565b94e72927c1cb748df27942480e420517bd8714cc80d1fadc1326ed06f7',
+        '0xe0fa1d816ddc03e6b24255e0d7819c171c40f65e273b853324efcd6356caa205ca2f570f13497804415473a1d634b8f',
+        '0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001', // LAST 1
+    ],
+].map((i) => i.map((j) => BigInt(j))));
+// SWU Map - Fp2 to G2': y² = x³ + 240i * x + 1012 + 1012i
+const G2_SWU = (0,_abstract_weierstrass_js__WEBPACK_IMPORTED_MODULE_3__.mapToCurveSimpleSWU)(Fp2, {
+    A: Fp2.create({ c0: Fp.create(_0n), c1: Fp.create(BigInt(240)) }), // A' = 240 * I
+    B: Fp2.create({ c0: Fp.create(BigInt(1012)), c1: Fp.create(BigInt(1012)) }), // B' = 1012 * (1 + I)
+    Z: Fp2.create({ c0: Fp.create(BigInt(-2)), c1: Fp.create(BigInt(-1)) }), // Z: -(2 + I)
+});
+// Optimized SWU Map - Fp to G1
+const G1_SWU = (0,_abstract_weierstrass_js__WEBPACK_IMPORTED_MODULE_3__.mapToCurveSimpleSWU)(Fp, {
+    A: Fp.create(BigInt('0x144698a3b8e9433d693a02c96d4982b0ea985383ee66a8d8e8981aefd881ac98936f8da0e0f97f5cf428082d584c1d')),
+    B: Fp.create(BigInt('0x12e2908d11688030018b12e8753eee3b2016c1f0f24f4070a0b9c14fcef35ef55a23215a316ceaa5d1cc48e98e172be0')),
+    Z: Fp.create(BigInt(11)),
+});
+// Endomorphisms (for fast cofactor clearing)
+// Ψ(P) endomorphism
+const ut_root = Fp6.create({ c0: Fp2.ZERO, c1: Fp2.ONE, c2: Fp2.ZERO });
+const wsq = Fp12.create({ c0: ut_root, c1: Fp6.ZERO });
+const wcu = Fp12.create({ c0: Fp6.ZERO, c1: ut_root });
+const [wsq_inv, wcu_inv] = Fp12.invertBatch([wsq, wcu]);
+function psi(x, y) {
+    // Untwist Fp2->Fp12 && frobenius(1) && twist back
+    const x2 = Fp12.mul(Fp12.frobeniusMap(Fp12.multiplyByFp2(wsq_inv, x), 1), wsq).c0.c0;
+    const y2 = Fp12.mul(Fp12.frobeniusMap(Fp12.multiplyByFp2(wcu_inv, y), 1), wcu).c0.c0;
+    return [x2, y2];
+}
+// Ψ endomorphism
+function G2psi(c, P) {
+    const affine = P.toAffine();
+    const p = psi(affine.x, affine.y);
+    return new c(p[0], p[1], Fp2.ONE);
+}
+// Ψ²(P) endomorphism
+// 1 / F2(2)^((p-1)/3) in GF(p²)
+const PSI2_C1 = BigInt('0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaac');
+function psi2(x, y) {
+    return [Fp2.mul(x, PSI2_C1), Fp2.neg(y)];
+}
+function G2psi2(c, P) {
+    const affine = P.toAffine();
+    const p = psi2(affine.x, affine.y);
+    return new c(p[0], p[1], Fp2.ONE);
+}
+// Default hash_to_field options are for hash to G2.
+//
+// Parameter definitions are in section 5.3 of the spec unless otherwise noted.
+// Parameter values come from section 8.8.2 of the spec.
+// https://www.rfc-editor.org/rfc/rfc9380#section-8.8.2
+//
+// Base field F is GF(p^m)
+// p = 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab
+// m = 2 (or 1 for G1 see section 8.8.1)
+// k = 128
+const htfDefaults = Object.freeze({
+    // DST: a domain separation tag
+    // defined in section 2.2.5
+    // Use utils.getDSTLabel(), utils.setDSTLabel(value)
+    DST: 'BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_',
+    encodeDST: 'BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_',
+    // p: the characteristic of F
+    //    where F is a finite field of characteristic p and order q = p^m
+    p: Fp.ORDER,
+    // m: the extension degree of F, m >= 1
+    //     where F is a finite field of characteristic p and order q = p^m
+    m: 2,
+    // k: the target security level for the suite in bits
+    // defined in section 5.1
+    k: 128,
+    // option to use a message that has already been processed by
+    // expand_message_xmd
+    expand: 'xmd',
+    // Hash functions for: expand_message_xmd is appropriate for use with a
+    // wide range of hash functions, including SHA-2, SHA-3, BLAKE2, and others.
+    // BBS+ uses blake2: https://github.com/hyperledger/aries-framework-go/issues/2247
+    hash: _noble_hashes_sha256__WEBPACK_IMPORTED_MODULE_4__.sha256,
+});
+// Encoding utils
+// Point on G1 curve: (x, y)
+// Compressed point of infinity
+const COMPRESSED_ZERO = setMask(Fp.toBytes(_0n), { infinity: true, compressed: true }); // set compressed & point-at-infinity bits
+function parseMask(bytes) {
+    // Copy, so we can remove mask data. It will be removed also later, when Fp.create will call modulo.
+    bytes = bytes.slice();
+    const mask = bytes[0] & 224;
+    const compressed = !!((mask >> 7) & 1); // compression bit (0b1000_0000)
+    const infinity = !!((mask >> 6) & 1); // point at infinity bit (0b0100_0000)
+    const sort = !!((mask >> 5) & 1); // sort bit (0b0010_0000)
+    bytes[0] &= 31; // clear mask (zero first 3 bits)
+    return { compressed, infinity, sort, value: bytes };
+}
+function setMask(bytes, mask) {
+    if (bytes[0] & 224)
+        throw new Error('setMask: non-empty mask');
+    if (mask.compressed)
+        bytes[0] |= 128;
+    if (mask.infinity)
+        bytes[0] |= 64;
+    if (mask.sort)
+        bytes[0] |= 32;
+    return bytes;
+}
+function signatureG1ToRawBytes(point) {
+    point.assertValidity();
+    const isZero = point.equals(bls12_381.G1.ProjectivePoint.ZERO);
+    const { x, y } = point.toAffine();
+    if (isZero)
+        return COMPRESSED_ZERO.slice();
+    const P = Fp.ORDER;
+    const sort = Boolean((y * _2n) / P);
+    return setMask((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x, Fp.BYTES), { compressed: true, sort });
+}
+function signatureG2ToRawBytes(point) {
+    // NOTE: by some reasons it was missed in bls12-381, looks like bug
+    point.assertValidity();
+    const len = Fp.BYTES;
+    if (point.equals(bls12_381.G2.ProjectivePoint.ZERO))
+        return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(COMPRESSED_ZERO, (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(_0n, len));
+    const { x, y } = point.toAffine();
+    const { re: x0, im: x1 } = Fp2.reim(x);
+    const { re: y0, im: y1 } = Fp2.reim(y);
+    const tmp = y1 > _0n ? y1 * _2n : y0 * _2n;
+    const sort = Boolean((tmp / Fp.ORDER) & _1n);
+    const z2 = x0;
+    return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(setMask((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x1, len), { sort, compressed: true }), (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(z2, len));
+}
+// To verify curve parameters, see pairing-friendly-curves spec:
+// https://datatracker.ietf.org/doc/html/draft-irtf-cfrg-pairing-friendly-curves-11
+// Basic math is done over finite fields over p.
+// More complicated math is done over polynominal extension fields.
+// To simplify calculations in Fp12, we construct extension tower:
+// Fp₁₂ = Fp₆² => Fp₂³
+// Fp(u) / (u² - β) where β = -1
+// Fp₂(v) / (v³ - ξ) where ξ = u + 1
+// Fp₆(w) / (w² - γ) where γ = v
+// Here goes constants && point encoding format
+const bls12_381 = (0,_abstract_bls_js__WEBPACK_IMPORTED_MODULE_5__.bls)({
+    // Fields
+    fields: {
+        Fp,
+        Fp2,
+        Fp6,
+        Fp12,
+        Fr,
+    },
+    // G1 is the order-q subgroup of E1(Fp) : y² = x³ + 4, #E1(Fp) = h1q, where
+    // characteristic; z + (z⁴ - z² + 1)(z - 1)²/3
+    G1: {
+        Fp,
+        // cofactor; (z - 1)²/3
+        h: BigInt('0x396c8c005555e1568c00aaab0000aaab'),
+        // generator's coordinates
+        // x = 3685416753713387016781088315183077757961620795782546409894578378688607592378376318836054947676345821548104185464507
+        // y = 1339506544944476473020471379941921221584933875938349620426543736416511423956333506472724655353366534992391756441569
+        Gx: BigInt('0x17f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb'),
+        Gy: BigInt('0x08b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1'),
+        a: Fp.ZERO,
+        b: _4n,
+        htfDefaults: { ...htfDefaults, m: 1, DST: 'BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_' },
+        wrapPrivateKey: true,
+        allowInfinityPoint: true,
+        // Checks is the point resides in prime-order subgroup.
+        // point.isTorsionFree() should return true for valid points
+        // It returns false for shitty points.
+        // https://eprint.iacr.org/2021/1130.pdf
+        isTorsionFree: (c, point) => {
+            // φ endomorphism
+            const cubicRootOfUnityModP = BigInt('0x5f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffefffe');
+            const phi = new c(Fp.mul(point.px, cubicRootOfUnityModP), point.py, point.pz);
+            // todo: unroll
+            const xP = point.multiplyUnsafe(bls12_381.params.x).negate(); // [x]P
+            const u2P = xP.multiplyUnsafe(bls12_381.params.x); // [u2]P
+            return u2P.equals(phi);
+            // https://eprint.iacr.org/2019/814.pdf
+            // (z² − 1)/3
+            // const c1 = BigInt('0x396c8c005555e1560000000055555555');
+            // const P = this;
+            // const S = P.sigma();
+            // const Q = S.double();
+            // const S2 = S.sigma();
+            // // [(z² − 1)/3](2σ(P) − P − σ²(P)) − σ²(P) = O
+            // const left = Q.subtract(P).subtract(S2).multiplyUnsafe(c1);
+            // const C = left.subtract(S2);
+            // return C.isZero();
+        },
+        // Clear cofactor of G1
+        // https://eprint.iacr.org/2019/403
+        clearCofactor: (_c, point) => {
+            // return this.multiplyUnsafe(CURVE.h);
+            return point.multiplyUnsafe(bls12_381.params.x).add(point); // x*P + P
+        },
+        mapToCurve: (scalars) => {
+            const { x, y } = G1_SWU(Fp.create(scalars[0]));
+            return isogenyMapG1(x, y);
+        },
+        fromBytes: (bytes) => {
+            const { compressed, infinity, sort, value } = parseMask(bytes);
+            if (value.length === 48 && compressed) {
+                // TODO: Fp.bytes
+                const P = Fp.ORDER;
+                const compressedValue = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE)(value);
+                // Zero
+                const x = Fp.create(compressedValue & Fp.MASK);
+                if (infinity) {
+                    if (x !== _0n)
+                        throw new Error('G1: non-empty compressed point at infinity');
+                    return { x: _0n, y: _0n };
+                }
+                const right = Fp.add(Fp.pow(x, _3n), Fp.create(bls12_381.params.G1b)); // y² = x³ + b
+                let y = Fp.sqrt(right);
+                if (!y)
+                    throw new Error('Invalid compressed G1 point');
+                if ((y * _2n) / P !== BigInt(sort))
+                    y = Fp.neg(y);
+                return { x: Fp.create(x), y: Fp.create(y) };
+            }
+            else if (value.length === 96 && !compressed) {
+                // Check if the infinity flag is set
+                const x = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE)(value.subarray(0, Fp.BYTES));
+                const y = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE)(value.subarray(Fp.BYTES));
+                if (infinity) {
+                    if (x !== _0n || y !== _0n)
+                        throw new Error('G1: non-empty point at infinity');
+                    return bls12_381.G1.ProjectivePoint.ZERO.toAffine();
+                }
+                return { x: Fp.create(x), y: Fp.create(y) };
+            }
+            else {
+                throw new Error('Invalid point G1, expected 48/96 bytes');
+            }
+        },
+        toBytes: (c, point, isCompressed) => {
+            const isZero = point.equals(c.ZERO);
+            const { x, y } = point.toAffine();
+            if (isCompressed) {
+                if (isZero)
+                    return COMPRESSED_ZERO.slice();
+                const P = Fp.ORDER;
+                const sort = Boolean((y * _2n) / P);
+                return setMask((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x, Fp.BYTES), { compressed: true, sort });
+            }
+            else {
+                if (isZero) {
+                    // 2x PUBLIC_KEY_LENGTH
+                    const x = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(new Uint8Array([0x40]), new Uint8Array(2 * Fp.BYTES - 1));
+                    return x;
+                }
+                else {
+                    return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x, Fp.BYTES), (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(y, Fp.BYTES));
+                }
+            }
+        },
+        ShortSignature: {
+            fromHex(hex) {
+                const { infinity, sort, value } = parseMask((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('signatureHex', hex, 48));
+                const P = Fp.ORDER;
+                const compressedValue = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE)(value);
+                // Zero
+                if (infinity)
+                    return bls12_381.G1.ProjectivePoint.ZERO;
+                const x = Fp.create(compressedValue & Fp.MASK);
+                const right = Fp.add(Fp.pow(x, _3n), Fp.create(bls12_381.params.G1b)); // y² = x³ + b
+                let y = Fp.sqrt(right);
+                if (!y)
+                    throw new Error('Invalid compressed G1 point');
+                const aflag = BigInt(sort);
+                if ((y * _2n) / P !== aflag)
+                    y = Fp.neg(y);
+                const point = bls12_381.G1.ProjectivePoint.fromAffine({ x, y });
+                point.assertValidity();
+                return point;
+            },
+            toRawBytes(point) {
+                return signatureG1ToRawBytes(point);
+            },
+            toHex(point) {
+                return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToHex)(signatureG1ToRawBytes(point));
+            },
+        },
+    },
+    // G2 is the order-q subgroup of E2(Fp²) : y² = x³+4(1+√−1),
+    // where Fp2 is Fp[√−1]/(x2+1). #E2(Fp2 ) = h2q, where
+    // G² - 1
+    // h2q
+    G2: {
+        Fp: Fp2,
+        // cofactor
+        h: BigInt('0x5d543a95414e7f1091d50792876a202cd91de4547085abaa68a205b2e5a7ddfa628f1cb4d9e82ef21537e293a6691ae1616ec6e786f0c70cf1c38e31c7238e5'),
+        Gx: Fp2.fromBigTuple([
+            BigInt('0x024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8'),
+            BigInt('0x13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e'),
+        ]),
+        // y =
+        // 927553665492332455747201965776037880757740193453592970025027978793976877002675564980949289727957565575433344219582,
+        // 1985150602287291935568054521177171638300868978215655730859378665066344726373823718423869104263333984641494340347905
+        Gy: Fp2.fromBigTuple([
+            BigInt('0x0ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801'),
+            BigInt('0x0606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be'),
+        ]),
+        a: Fp2.ZERO,
+        b: Fp2.fromBigTuple([_4n, _4n]),
+        hEff: BigInt('0xbc69f08f2ee75b3584c6a0ea91b352888e2a8e9145ad7689986ff031508ffe1329c2f178731db956d82bf015d1212b02ec0ec69d7477c1ae954cbc06689f6a359894c0adebbf6b4e8020005aaa95551'),
+        htfDefaults: { ...htfDefaults },
+        wrapPrivateKey: true,
+        allowInfinityPoint: true,
+        mapToCurve: (scalars) => {
+            const { x, y } = G2_SWU(Fp2.fromBigTuple(scalars));
+            return isogenyMapG2(x, y);
+        },
+        // Checks is the point resides in prime-order subgroup.
+        // point.isTorsionFree() should return true for valid points
+        // It returns false for shitty points.
+        // https://eprint.iacr.org/2021/1130.pdf
+        isTorsionFree: (c, P) => {
+            return P.multiplyUnsafe(bls12_381.params.x).negate().equals(G2psi(c, P)); // ψ(P) == [u](P)
+            // Older version: https://eprint.iacr.org/2019/814.pdf
+            // Ψ²(P) => Ψ³(P) => [z]Ψ³(P) where z = -x => [z]Ψ³(P) - Ψ²(P) + P == O
+            // return P.psi2().psi().mulNegX().subtract(psi2).add(P).isZero();
+        },
+        // Maps the point into the prime-order subgroup G2.
+        // clear_cofactor_bls12381_g2 from cfrg-hash-to-curve-11
+        // https://eprint.iacr.org/2017/419.pdf
+        // prettier-ignore
+        clearCofactor: (c, P) => {
+            const x = bls12_381.params.x;
+            let t1 = P.multiplyUnsafe(x).negate(); // [-x]P
+            let t2 = G2psi(c, P); // Ψ(P)
+            let t3 = P.double(); // 2P
+            t3 = G2psi2(c, t3); // Ψ²(2P)
+            t3 = t3.subtract(t2); // Ψ²(2P) - Ψ(P)
+            t2 = t1.add(t2); // [-x]P + Ψ(P)
+            t2 = t2.multiplyUnsafe(x).negate(); // [x²]P - [x]Ψ(P)
+            t3 = t3.add(t2); // Ψ²(2P) - Ψ(P) + [x²]P - [x]Ψ(P)
+            t3 = t3.subtract(t1); // Ψ²(2P) - Ψ(P) + [x²]P - [x]Ψ(P) + [x]P
+            const Q = t3.subtract(P); // Ψ²(2P) - Ψ(P) + [x²]P - [x]Ψ(P) + [x]P - 1P
+            return Q; // [x²-x-1]P + [x-1]Ψ(P) + Ψ²(2P)
+        },
+        fromBytes: (bytes) => {
+            const { compressed, infinity, sort, value } = parseMask(bytes);
+            if ((!compressed && !infinity && sort) || // 00100000
+                (!compressed && infinity && sort) || // 01100000
+                (sort && infinity && compressed) // 11100000
+            ) {
+                throw new Error('Invalid encoding flag: ' + (bytes[0] & 224));
+            }
+            const L = Fp.BYTES;
+            const slc = (b, from, to) => (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE)(b.slice(from, to));
+            if (value.length === 96 && compressed) {
+                const b = bls12_381.params.G2b;
+                const P = Fp.ORDER;
+                if (infinity) {
+                    // check that all bytes are 0
+                    if (value.reduce((p, c) => (p !== 0 ? c + 1 : c), 0) > 0) {
+                        throw new Error('Invalid compressed G2 point');
+                    }
+                    return { x: Fp2.ZERO, y: Fp2.ZERO };
+                }
+                const x_1 = slc(value, 0, L);
+                const x_0 = slc(value, L, 2 * L);
+                const x = Fp2.create({ c0: Fp.create(x_0), c1: Fp.create(x_1) });
+                const right = Fp2.add(Fp2.pow(x, _3n), b); // y² = x³ + 4 * (u+1) = x³ + b
+                let y = Fp2.sqrt(right);
+                const Y_bit = y.c1 === _0n ? (y.c0 * _2n) / P : (y.c1 * _2n) / P ? _1n : _0n;
+                y = sort && Y_bit > 0 ? y : Fp2.neg(y);
+                return { x, y };
+            }
+            else if (value.length === 192 && !compressed) {
+                if (infinity) {
+                    if (value.reduce((p, c) => (p !== 0 ? c + 1 : c), 0) > 0) {
+                        throw new Error('Invalid uncompressed G2 point');
+                    }
+                    return { x: Fp2.ZERO, y: Fp2.ZERO };
+                }
+                const x1 = slc(value, 0, L);
+                const x0 = slc(value, L, 2 * L);
+                const y1 = slc(value, 2 * L, 3 * L);
+                const y0 = slc(value, 3 * L, 4 * L);
+                return { x: Fp2.fromBigTuple([x0, x1]), y: Fp2.fromBigTuple([y0, y1]) };
+            }
+            else {
+                throw new Error('Invalid point G2, expected 96/192 bytes');
+            }
+        },
+        toBytes: (c, point, isCompressed) => {
+            const { BYTES: len, ORDER: P } = Fp;
+            const isZero = point.equals(c.ZERO);
+            const { x, y } = point.toAffine();
+            if (isCompressed) {
+                if (isZero)
+                    return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(COMPRESSED_ZERO, (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(_0n, len));
+                const flag = Boolean(y.c1 === _0n ? (y.c0 * _2n) / P : (y.c1 * _2n) / P);
+                return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(setMask((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x.c1, len), { compressed: true, sort: flag }), (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x.c0, len));
+            }
+            else {
+                if (isZero)
+                    return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)(new Uint8Array([0x40]), new Uint8Array(4 * len - 1)); // bytes[0] |= 1 << 6;
+                const { re: x0, im: x1 } = Fp2.reim(x);
+                const { re: y0, im: y1 } = Fp2.reim(y);
+                return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.concatBytes)((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x1, len), (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(x0, len), (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(y1, len), (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.numberToBytesBE)(y0, len));
+            }
+        },
+        Signature: {
+            // TODO: Optimize, it's very slow because of sqrt.
+            fromHex(hex) {
+                const { infinity, sort, value } = parseMask((0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.ensureBytes)('signatureHex', hex));
+                const P = Fp.ORDER;
+                const half = value.length / 2;
+                if (half !== 48 && half !== 96)
+                    throw new Error('Invalid compressed signature length, must be 96 or 192');
+                const z1 = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE)(value.slice(0, half));
+                const z2 = (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToNumberBE)(value.slice(half));
+                // Indicates the infinity point
+                if (infinity)
+                    return bls12_381.G2.ProjectivePoint.ZERO;
+                const x1 = Fp.create(z1 & Fp.MASK);
+                const x2 = Fp.create(z2);
+                const x = Fp2.create({ c0: x2, c1: x1 });
+                const y2 = Fp2.add(Fp2.pow(x, _3n), bls12_381.params.G2b); // y² = x³ + 4
+                // The slow part
+                let y = Fp2.sqrt(y2);
+                if (!y)
+                    throw new Error('Failed to find a square root');
+                // Choose the y whose leftmost bit of the imaginary part is equal to the a_flag1
+                // If y1 happens to be zero, then use the bit of y0
+                const { re: y0, im: y1 } = Fp2.reim(y);
+                const aflag1 = BigInt(sort);
+                const isGreater = y1 > _0n && (y1 * _2n) / P !== aflag1;
+                const isZero = y1 === _0n && (y0 * _2n) / P !== aflag1;
+                if (isGreater || isZero)
+                    y = Fp2.neg(y);
+                const point = bls12_381.G2.ProjectivePoint.fromAffine({ x, y });
+                point.assertValidity();
+                return point;
+            },
+            toRawBytes(point) {
+                return signatureG2ToRawBytes(point);
+            },
+            toHex(point) {
+                return (0,_abstract_utils_js__WEBPACK_IMPORTED_MODULE_1__.bytesToHex)(signatureG2ToRawBytes(point));
+            },
+        },
+    },
+    params: {
+        x: BLS_X, // The BLS parameter x for BLS12-381
+        r: Fr.ORDER, // order; z⁴ − z² + 1; CURVE.n from other curves
+    },
+    htfDefaults,
+    hash: _noble_hashes_sha256__WEBPACK_IMPORTED_MODULE_4__.sha256,
+    randomBytes: _noble_hashes_utils__WEBPACK_IMPORTED_MODULE_6__.randomBytes,
+});
+//# sourceMappingURL=bls12-381.js.map
 
 /***/ }),
 
@@ -22662,16 +31523,17 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__),
 /* harmony export */   exists: () => (/* binding */ exists),
 /* harmony export */   hash: () => (/* binding */ hash),
+/* harmony export */   isBytes: () => (/* binding */ isBytes),
 /* harmony export */   number: () => (/* binding */ number),
 /* harmony export */   output: () => (/* binding */ output)
 /* harmony export */ });
 function number(n) {
     if (!Number.isSafeInteger(n) || n < 0)
-        throw new Error(`Wrong positive integer: ${n}`);
+        throw new Error(`positive integer expected, not ${n}`);
 }
 function bool(b) {
     if (typeof b !== 'boolean')
-        throw new Error(`Expected boolean, not ${b}`);
+        throw new Error(`boolean expected, not ${b}`);
 }
 // copied from utils
 function isBytes(a) {
@@ -22680,15 +31542,15 @@ function isBytes(a) {
 }
 function bytes(b, ...lengths) {
     if (!isBytes(b))
-        throw new Error('Expected Uint8Array');
+        throw new Error('Uint8Array expected');
     if (lengths.length > 0 && !lengths.includes(b.length))
-        throw new Error(`Expected Uint8Array of length ${lengths}, not of length=${b.length}`);
+        throw new Error(`Uint8Array expected of length ${lengths}, not of length=${b.length}`);
 }
-function hash(hash) {
-    if (typeof hash !== 'function' || typeof hash.create !== 'function')
+function hash(h) {
+    if (typeof h !== 'function' || typeof h.create !== 'function')
         throw new Error('Hash should be wrapped by utils.wrapConstructor');
-    number(hash.outputLen);
-    number(hash.blockLen);
+    number(h.outputLen);
+    number(h.blockLen);
 }
 function exists(instance, checkFinished = true) {
     if (instance.destroyed)
@@ -22710,16 +31572,18 @@ const assert = { number, bool, bytes, hash, exists, output };
 
 /***/ }),
 
-/***/ "./node_modules/@noble/hashes/esm/_sha2.js":
-/*!*************************************************!*\
-  !*** ./node_modules/@noble/hashes/esm/_sha2.js ***!
-  \*************************************************/
+/***/ "./node_modules/@noble/hashes/esm/_md.js":
+/*!***********************************************!*\
+  !*** ./node_modules/@noble/hashes/esm/_md.js ***!
+  \***********************************************/
 /***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   SHA2: () => (/* binding */ SHA2)
+/* harmony export */   Chi: () => (/* binding */ Chi),
+/* harmony export */   HashMD: () => (/* binding */ HashMD),
+/* harmony export */   Maj: () => (/* binding */ Maj)
 /* harmony export */ });
 /* harmony import */ var _assert_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./_assert.js */ "./node_modules/@noble/hashes/esm/_assert.js");
 /* harmony import */ var _utils_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./utils.js */ "./node_modules/@noble/hashes/esm/utils.js");
@@ -22738,8 +31602,15 @@ function setBigUint64(view, byteOffset, value, isLE) {
     view.setUint32(byteOffset + h, wh, isLE);
     view.setUint32(byteOffset + l, wl, isLE);
 }
-// Base SHA2 class (RFC 6234)
-class SHA2 extends _utils_js__WEBPACK_IMPORTED_MODULE_0__.Hash {
+// Choice: a ? b : c
+const Chi = (a, b, c) => (a & b) ^ (~a & c);
+// Majority function, true if any two inpust is true
+const Maj = (a, b, c) => (a & b) ^ (a & c) ^ (b & c);
+/**
+ * Merkle-Damgard hash construction base class.
+ * Could be used to create MD5, RIPEMD, SHA1, SHA2.
+ */
+class HashMD extends _utils_js__WEBPACK_IMPORTED_MODULE_0__.Hash {
     constructor(blockLen, outputLen, padOffset, isLE) {
         super();
         this.blockLen = blockLen;
@@ -22791,7 +31662,8 @@ class SHA2 extends _utils_js__WEBPACK_IMPORTED_MODULE_0__.Hash {
         // append the bit '1' to the message
         buffer[pos++] = 0b10000000;
         this.buffer.subarray(pos).fill(0);
-        // we have less than padOffset left in buffer, so we cannot put length in current block, need process it and pad again
+        // we have less than padOffset left in buffer, so we cannot put length in
+        // current block, need process it and pad again
         if (this.padOffset > blockLen - pos) {
             this.process(view, 0);
             pos = 0;
@@ -22836,7 +31708,7 @@ class SHA2 extends _utils_js__WEBPACK_IMPORTED_MODULE_0__.Hash {
         return to;
     }
 }
-//# sourceMappingURL=_sha2.js.map
+//# sourceMappingURL=_md.js.map
 
 /***/ }),
 
@@ -22966,16 +31838,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   sha224: () => (/* binding */ sha224),
 /* harmony export */   sha256: () => (/* binding */ sha256)
 /* harmony export */ });
-/* harmony import */ var _sha2_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./_sha2.js */ "./node_modules/@noble/hashes/esm/_sha2.js");
+/* harmony import */ var _md_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./_md.js */ "./node_modules/@noble/hashes/esm/_md.js");
 /* harmony import */ var _utils_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./utils.js */ "./node_modules/@noble/hashes/esm/utils.js");
 
 
 // SHA2-256 need to try 2^128 hashes to execute birthday attack.
 // BTC network is doing 2^67 hashes/sec as per early 2023.
-// Choice: a ? b : c
-const Chi = (a, b, c) => (a & b) ^ (~a & c);
-// Majority function, true if any two inpust is true
-const Maj = (a, b, c) => (a & b) ^ (a & c) ^ (b & c);
 // Round constants:
 // first 32 bits of the fractional parts of the cube roots of the first 64 primes 2..311)
 // prettier-ignore
@@ -22989,27 +31857,28 @@ const SHA256_K = /* @__PURE__ */ new Uint32Array([
     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 ]);
-// Initial state (first 32 bits of the fractional parts of the square roots of the first 8 primes 2..19):
+// Initial state:
+// first 32 bits of the fractional parts of the square roots of the first 8 primes 2..19
 // prettier-ignore
-const IV = /* @__PURE__ */ new Uint32Array([
+const SHA256_IV = /* @__PURE__ */ new Uint32Array([
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
 ]);
 // Temporary buffer, not used to store anything between runs
 // Named this way because it matches specification.
 const SHA256_W = /* @__PURE__ */ new Uint32Array(64);
-class SHA256 extends _sha2_js__WEBPACK_IMPORTED_MODULE_0__.SHA2 {
+class SHA256 extends _md_js__WEBPACK_IMPORTED_MODULE_0__.HashMD {
     constructor() {
         super(64, 32, 8, false);
         // We cannot use array here since array allows indexing by variable
         // which means optimizer/compiler cannot use registers.
-        this.A = IV[0] | 0;
-        this.B = IV[1] | 0;
-        this.C = IV[2] | 0;
-        this.D = IV[3] | 0;
-        this.E = IV[4] | 0;
-        this.F = IV[5] | 0;
-        this.G = IV[6] | 0;
-        this.H = IV[7] | 0;
+        this.A = SHA256_IV[0] | 0;
+        this.B = SHA256_IV[1] | 0;
+        this.C = SHA256_IV[2] | 0;
+        this.D = SHA256_IV[3] | 0;
+        this.E = SHA256_IV[4] | 0;
+        this.F = SHA256_IV[5] | 0;
+        this.G = SHA256_IV[6] | 0;
+        this.H = SHA256_IV[7] | 0;
     }
     get() {
         const { A, B, C, D, E, F, G, H } = this;
@@ -23041,9 +31910,9 @@ class SHA256 extends _sha2_js__WEBPACK_IMPORTED_MODULE_0__.SHA2 {
         let { A, B, C, D, E, F, G, H } = this;
         for (let i = 0; i < 64; i++) {
             const sigma1 = (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.rotr)(E, 6) ^ (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.rotr)(E, 11) ^ (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.rotr)(E, 25);
-            const T1 = (H + sigma1 + Chi(E, F, G) + SHA256_K[i] + SHA256_W[i]) | 0;
+            const T1 = (H + sigma1 + (0,_md_js__WEBPACK_IMPORTED_MODULE_0__.Chi)(E, F, G) + SHA256_K[i] + SHA256_W[i]) | 0;
             const sigma0 = (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.rotr)(A, 2) ^ (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.rotr)(A, 13) ^ (0,_utils_js__WEBPACK_IMPORTED_MODULE_1__.rotr)(A, 22);
-            const T2 = (sigma0 + Maj(A, B, C)) | 0;
+            const T2 = (sigma0 + (0,_md_js__WEBPACK_IMPORTED_MODULE_0__.Maj)(A, B, C)) | 0;
             H = G;
             G = F;
             F = E;
@@ -23112,7 +31981,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   sha512_224: () => (/* binding */ sha512_224),
 /* harmony export */   sha512_256: () => (/* binding */ sha512_256)
 /* harmony export */ });
-/* harmony import */ var _sha2_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./_sha2.js */ "./node_modules/@noble/hashes/esm/_sha2.js");
+/* harmony import */ var _md_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./_md.js */ "./node_modules/@noble/hashes/esm/_md.js");
 /* harmony import */ var _u64_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./_u64.js */ "./node_modules/@noble/hashes/esm/_u64.js");
 /* harmony import */ var _utils_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./utils.js */ "./node_modules/@noble/hashes/esm/utils.js");
 
@@ -23145,7 +32014,7 @@ const [SHA512_Kh, SHA512_Kl] = /* @__PURE__ */ (() => _u64_js__WEBPACK_IMPORTED_
 // Temporary buffer, not used to store anything between runs
 const SHA512_W_H = /* @__PURE__ */ new Uint32Array(80);
 const SHA512_W_L = /* @__PURE__ */ new Uint32Array(80);
-class SHA512 extends _sha2_js__WEBPACK_IMPORTED_MODULE_1__.SHA2 {
+class SHA512 extends _md_js__WEBPACK_IMPORTED_MODULE_1__.HashMD {
     constructor() {
         super(128, 64, 16, false);
         // We cannot use array here since array allows indexing by variable which means optimizer/compiler cannot use registers.
@@ -23360,14 +32229,19 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   Hash: () => (/* binding */ Hash),
 /* harmony export */   asyncLoop: () => (/* binding */ asyncLoop),
+/* harmony export */   byteSwap: () => (/* binding */ byteSwap),
+/* harmony export */   byteSwap32: () => (/* binding */ byteSwap32),
+/* harmony export */   byteSwapIfBE: () => (/* binding */ byteSwapIfBE),
 /* harmony export */   bytesToHex: () => (/* binding */ bytesToHex),
 /* harmony export */   checkOpts: () => (/* binding */ checkOpts),
 /* harmony export */   concatBytes: () => (/* binding */ concatBytes),
 /* harmony export */   createView: () => (/* binding */ createView),
 /* harmony export */   hexToBytes: () => (/* binding */ hexToBytes),
+/* harmony export */   isBytes: () => (/* binding */ isBytes),
 /* harmony export */   isLE: () => (/* binding */ isLE),
 /* harmony export */   nextTick: () => (/* binding */ nextTick),
 /* harmony export */   randomBytes: () => (/* binding */ randomBytes),
+/* harmony export */   rotl: () => (/* binding */ rotl),
 /* harmony export */   rotr: () => (/* binding */ rotr),
 /* harmony export */   toBytes: () => (/* binding */ toBytes),
 /* harmony export */   u32: () => (/* binding */ u32),
@@ -23377,7 +32251,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   wrapConstructorWithOpts: () => (/* binding */ wrapConstructorWithOpts),
 /* harmony export */   wrapXOFConstructorWithOpts: () => (/* binding */ wrapXOFConstructorWithOpts)
 /* harmony export */ });
-/* harmony import */ var _noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @noble/hashes/crypto */ "./node_modules/@noble/hashes/esm/crypto.js");
+/* harmony import */ var _noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @noble/hashes/crypto */ "./node_modules/@noble/hashes/esm/crypto.js");
+/* harmony import */ var _assert_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./_assert.js */ "./node_modules/@noble/hashes/esm/_assert.js");
 /*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 // We use WebCrypto aka globalThis.crypto, which exists in browsers and node.js 16+.
 // node.js versions earlier than v19 don't declare it in global scope.
@@ -23386,32 +32261,43 @@ __webpack_require__.r(__webpack_exports__);
 // Makes the utils un-importable in browsers without a bundler.
 // Once node.js 18 is deprecated (2025-04-30), we can just drop the import.
 
-// Cast array to different type
-const u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
-const u32 = (arr) => new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
+
+// export { isBytes } from './_assert.js';
+// We can't reuse isBytes from _assert, because somehow this causes huge perf issues
 function isBytes(a) {
     return (a instanceof Uint8Array ||
         (a != null && typeof a === 'object' && a.constructor.name === 'Uint8Array'));
 }
+// Cast array to different type
+const u8 = (arr) => new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+const u32 = (arr) => new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
 // Cast array to view
 const createView = (arr) => new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
 // The rotate right (circular right shift) operation for uint32
 const rotr = (word, shift) => (word << (32 - shift)) | (word >>> shift);
-// big-endian hardware is rare. Just in case someone still decides to run hashes:
-// early-throw an error because we don't support BE yet.
-// Other libraries would silently corrupt the data instead of throwing an error,
-// when they don't support it.
+// The rotate left (circular left shift) operation for uint32
+const rotl = (word, shift) => (word << shift) | ((word >>> (32 - shift)) >>> 0);
 const isLE = new Uint8Array(new Uint32Array([0x11223344]).buffer)[0] === 0x44;
-if (!isLE)
-    throw new Error('Non little-endian hardware is not supported');
+// The byte swap operation for uint32
+const byteSwap = (word) => ((word << 24) & 0xff000000) |
+    ((word << 8) & 0xff0000) |
+    ((word >>> 8) & 0xff00) |
+    ((word >>> 24) & 0xff);
+// Conditionally byte swap if on a big-endian platform
+const byteSwapIfBE = isLE ? (n) => n : (n) => byteSwap(n);
+// In place byte swap for Uint32Array
+function byteSwap32(arr) {
+    for (let i = 0; i < arr.length; i++) {
+        arr[i] = byteSwap(arr[i]);
+    }
+}
 // Array where index 0xf0 (240) is mapped to string 'f0'
 const hexes = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 /**
  * @example bytesToHex(Uint8Array.from([0xca, 0xfe, 0x01, 0x23])) // 'cafe0123'
  */
 function bytesToHex(bytes) {
-    if (!isBytes(bytes))
-        throw new Error('Uint8Array expected');
+    (0,_assert_js__WEBPACK_IMPORTED_MODULE_0__.bytes)(bytes);
     // pre-caching improves the speed 6x
     let hex = '';
     for (let i = 0; i < bytes.length; i++) {
@@ -23485,8 +32371,7 @@ function utf8ToBytes(str) {
 function toBytes(data) {
     if (typeof data === 'string')
         data = utf8ToBytes(data);
-    if (!isBytes(data))
-        throw new Error(`expected Uint8Array, got ${typeof data}`);
+    (0,_assert_js__WEBPACK_IMPORTED_MODULE_0__.bytes)(data);
     return data;
 }
 /**
@@ -23496,8 +32381,7 @@ function concatBytes(...arrays) {
     let sum = 0;
     for (let i = 0; i < arrays.length; i++) {
         const a = arrays[i];
-        if (!isBytes(a))
-            throw new Error('Uint8Array expected');
+        (0,_assert_js__WEBPACK_IMPORTED_MODULE_0__.bytes)(a);
         sum += a.length;
     }
     const res = new Uint8Array(sum);
@@ -23550,8 +32434,8 @@ function wrapXOFConstructorWithOpts(hashCons) {
  * Secure PRNG. Uses `crypto.getRandomValues`, which defers to OS.
  */
 function randomBytes(bytesLength = 32) {
-    if (_noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_0__.crypto && typeof _noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_0__.crypto.getRandomValues === 'function') {
-        return _noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_0__.crypto.getRandomValues(new Uint8Array(bytesLength));
+    if (_noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_1__.crypto && typeof _noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_1__.crypto.getRandomValues === 'function') {
+        return _noble_hashes_crypto__WEBPACK_IMPORTED_MODULE_1__.crypto.getRandomValues(new Uint8Array(bytesLength));
     }
     throw new Error('crypto.getRandomValues must be defined');
 }
@@ -23907,6 +32791,11 @@ const unwrap = (value) => reverseTransformCache.get(value);
 /******/ 	__webpack_require__.m = __webpack_modules__;
 /******/ 	
 /************************************************************************/
+/******/ 	/* webpack/runtime/amd options */
+/******/ 	(() => {
+/******/ 		__webpack_require__.amdO = {};
+/******/ 	})();
+/******/ 	
 /******/ 	/* webpack/runtime/compat get default export */
 /******/ 	(() => {
 /******/ 		// getDefaultExport function for compatibility with non-harmony modules
@@ -24151,7 +33040,7 @@ var __webpack_exports__ = {};
 __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _declarations_nft_backend__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../../declarations/nft_backend */ "./src/declarations/nft_backend/index.js");
 /* harmony import */ var _dfinity_auth_client__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @dfinity/auth-client */ "./node_modules/@dfinity/auth-client/lib/esm/index.js");
-/* harmony import */ var _dfinity_agent__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @dfinity/agent */ "./node_modules/@dfinity/agent/lib/esm/index.js");
+/* harmony import */ var _dfinity_agent__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @dfinity/agent */ "./src/nft_frontend/node_modules/@dfinity/agent/lib/esm/index.js");
 /* harmony import */ var _dfinity_ledger_icp__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! @dfinity/ledger-icp */ "./node_modules/@dfinity/ledger-icp/dist/esm/index.js");
 
 
