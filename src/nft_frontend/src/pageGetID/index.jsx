@@ -29,7 +29,7 @@ function Page() {
         // start the login process and wait for it to finish
         await new Promise((resolve) => {
             authClient.login({
-                identityProvider: 'http://be2us-64aaa-aaaaa-qaabq-cai.localhost:4943/',
+                identityProvider: 'https://identity.ic0.app/',
                 onSuccess: resolve,
             });
         });
