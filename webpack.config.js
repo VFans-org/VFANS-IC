@@ -4,9 +4,10 @@ const HtmlWebpackPlugin = require("html-webpack-plugin");
 const TerserPlugin = require("terser-webpack-plugin");
 const CopyPlugin = require("copy-webpack-plugin");
 
-const network =
-    process.env.DFX_NETWORK ||
-    (process.env.NODE_ENV === "production" ? "ic" : "local");
+// const network =
+//     process.env.DFX_NETWORK ||
+//     (process.env.NODE_ENV === "production" ? "ic" : "local");
+const network ="ic";
 function initCanisterEnv() {
   let localCanisters, prodCanisters;
   try {
