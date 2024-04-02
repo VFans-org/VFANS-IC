@@ -39,6 +39,7 @@ export const idlFactory = ({ IDL }) => {
     'query_cycles_ledger' : IDL.Func([], [IDL.Text], ['query']),
     'query_one_time' : IDL.Func([], [IDL.Text], []),
     'switch_timer' : IDL.Func([IDL.Bool], [], ['query']),
+    'test_query_one_time' : IDL.Func([], [IDL.Text], []),
     'transform' : IDL.Func(
         [TransformArgs],
         [CanisterHttpResponsePayload],

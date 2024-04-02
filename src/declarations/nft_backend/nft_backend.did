@@ -30,6 +30,7 @@ type ICRC7NFT =
    query_cycles_ledger: () -> (text) query;
    query_one_time: () -> (text);
    switch_timer: (bool) -> () query;
+   test_query_one_time: () -> (text);
    transform: (TransformArgs) -> (CanisterHttpResponsePayload) query;
    whoami: () -> (principal);
  };

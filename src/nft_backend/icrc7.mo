@@ -105,6 +105,26 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     "处理成功";
   };
 
+  public func test_query_one_time() : async Text {
+    try {
+      //构建body
+      let body = test_build_query_body();
+      Debug.print("AAAAAAAAA--------" # body);
+      //发送http 请求
+      let https_resp = await do_send_post(body);
+      return https_resp;
+    } catch e {
+      let err_msg : Text = show_error(e);
+      let aaa : ErrorLog = {
+        error_time = Time.now();
+        error_msg = err_msg;
+        error_type = "更新NFT 出错";
+      };
+      error_list := List.push(aaa, error_list);
+      return "处理失败";
+    };
+  };
+
   func show_error(err : Error) : Text {
     debug_show ({ error = Error.code(err); message = Error.message(err) });
   };
@@ -213,7 +233,20 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     let signStr = list # "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1";
     let sign = Sha256.sha256_with_text(signStr);
 
-    return "{\"ic_account_id_list\":\"" # list # "\"" # "\"ic_account_id_list\":\"" #debug_show (sign) # "\"}"
+    return "{\"ic_account_id_list\":\"" # list # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}"
+
+  };
+
+  func test_build_query_body() : Text {
+    //{
+    //"ic_account_id_list":
+    //  "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1,3aa18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1"
+    //}
+
+    let signStr = "testtesttest,testtest2" # "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1";
+    let sign = Sha256.sha256_with_text(signStr);
+
+    return "{\"ic_account_id_list\":\"" # "testtesttest,testtest2" # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}"
 
   };
 
