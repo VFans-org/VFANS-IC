@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useLocation,useHistory } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { nft_backend, createActor } from 'declarations/nft_backend';
 import { AuthClient } from "@dfinity/auth-client"
 import { HttpAgent } from "@dfinity/agent";
@@ -13,7 +13,6 @@ import './index.css';
 function Page() {
     const navigate = useNavigate()
     const localtion = useLocation()
-    const history = useHistory();
     const params = queryString.parse(location.search); 
 
     const onCreateTest = () => {
@@ -30,7 +29,7 @@ function Page() {
         // start the login process and wait for it to finish
         await new Promise((resolve) => {
             authClient.login({
-                identityProvider: 'https://identity.ic0.app/',
+                identityProvider: process.env.DFX_URL,
                 onSuccess: resolve,
             });
         });
@@ -39,7 +38,7 @@ function Page() {
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
         const agent = new HttpAgent({ identity });
-        const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
+        const actor = createActor(process.env.DFX_BACKEND_ID, {
             agent,
         });
         // Using the interface description of our webapp, we create an actor that we use to call the service methods.
@@ -61,7 +60,7 @@ function Page() {
         <div className='page-getid'>
             <NavBar
                 back={<ArrowLeft color="rgba(0, 0, 0, 0.85)" />}
-                onBackClick={() =>  history.goBack()}
+                onBackClick={() =>  navigate(-1)}
             ></NavBar>
             <div className='content'>
                 <div className='block-box'>

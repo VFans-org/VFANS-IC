@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Image,Toast } from '@nutui/nutui-react';
+import { Image, Toast } from '@nutui/nutui-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import imgfadian from './assets/fadian.png';
 import imgkongtou from './assets/kongtou.png';
@@ -7,8 +7,11 @@ import imgleidian from './assets/leidian.png';
 import imgshandian from './assets/shandian.png';
 import vector from './assets/vector.svg';
 import queryString from 'query-string';
-import { nft_backend } from 'declarations/nft_backend';
 import copy from 'copy-to-clipboard'
+import { nft_backend, createActor } from 'declarations/nft_backend';
+import { AuthClient } from "@dfinity/auth-client"
+import { HttpAgent } from "@dfinity/agent";
+import { AccountIdentifier } from "@dfinity/ledger-icp";
 import './index.css';
 
 
@@ -30,24 +33,60 @@ function Page() {
         value: 'vft_update_time'
     }]
 
-    useEffect(() => {
-        const params = queryString.parse(location.search);
-        nft_backend.queryNfts(params.id).then((data) => {
-            console.log(data, '------')
-            setPageData(JSON.parse(data));
-        });
+    // useEffect(() => {
+    //     const params = queryString.parse(location.search);
 
+    //     nft_backend.queryNfts(params.id).then((data) => {
+    //         console.log(data, '------')
+    //         setPageData(JSON.parse(data));
+    //     });
+
+    // }, [])
+
+    useEffect(() => {
+        (async () => {
+            const params = queryString.parse(location.search);
+            let id = params.id;
+            if (!id) {
+                // create an auth client
+                let authClient = await AuthClient.create();
+                // start the login process and wait for it to finish
+                await new Promise((resolve) => {
+                    authClient.login({
+                        identityProvider: process.env.DFX_URL,
+                        onSuccess: resolve,
+                    });
+                });
+
+                // At this point we're authenticated, and we can get the identity from the auth client:
+                const identity = authClient.getIdentity();
+                // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
+                const agent = new HttpAgent({ identity });
+                const actor = createActor(process.env.DFX_BACKEND_ID, {
+                    agent,
+                });
+                // Using the interface description of our webapp, we create an actor that we use to call the service methods.
+                const principal = await actor.whoami();
+                const textDecoder = new TextDecoder();
+                const accountIdentifier = AccountIdentifier.fromPrincipal({ principal: principal })
+                id = accountIdentifier.toHex();
+            }
+            console.log(id)
+            nft_backend.queryNfts(id).then((data) => {
+                console.log(data, '------')
+                setPageData(JSON.parse(data));
+            });
+
+        })()
     }, [])
 
-    const handleCopyClick = () => {
-    }
 
     return (
         <div className='container'>
             <div style={{
                 backgroundImage: `url(${imgfadian})`
             }} className='image-bg'>
-                <div className='image-btn'> 
+                <div className='image-btn'>
                     <Link to='https://mtest.vfans.org/my-vft/more-vft'>
                         <span className='image-btn-link'>获取更多</span>
                     </Link>
@@ -57,9 +96,9 @@ function Page() {
                 <div className='input-label'>社区身份地址：</div>
                 <div className='input-box'>
                     <div className='input-txt'>{pageData.vfans_account_id || '铸造中，请稍后查看'}</div>
-                    <div style={{
+                    {/* <div style={{
                         backgroundImage: `url(${vector})`
-                    }} className='vector' onClick={handleCopyClick}></div>
+                    }} className='vector'  ></div> */}
                 </div>
                 <div className='row-box'>
                     {
