@@ -23,10 +23,11 @@ type ICRC7NFT =
    getErrorLog: () -> (text) query;
    getSubNft2: () -> (nat) query;
    getUpdate: (nat) -> (text) query;
-   greet: (text) -> (text) query;
    make_test: () -> ();
    mintICRC7: (VFTParams) -> (text);
    queryNfts: (text) -> (text) query;
+   query_balance: () -> (nat) query;
+   query_cycles_ledger: () -> (text) query;
    query_one_time: () -> (text);
    switch_timer: (bool) -> () query;
    transform: (TransformArgs) -> (CanisterHttpResponsePayload) query;
