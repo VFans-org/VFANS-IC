@@ -6,6 +6,9 @@ import { HttpAgent } from "@dfinity/agent";
 import { AccountIdentifier } from "@dfinity/ledger-icp";
 
 function App() {
+  console.log('aaa',process.env.DFX_NETWORK)
+  const apiUrl = process.env.API_URL;
+  const secretKey = process.env.API_SECRET_KEY;
   const [greeting, setGreeting] = useState('');
   let navigate = useNavigate()
   // /* 手写实现获取到url中？后的参数信息 */
@@ -21,7 +24,7 @@ function App() {
     // start the login process and wait for it to finish
     await new Promise((resolve) => {
       authClient.login({
-        identityProvider: 'https://identity.ic0.app',
+        identityProvider: process.env.DFX_URL,
         onSuccess: resolve,
       });
     });
@@ -30,7 +33,7 @@ function App() {
     const identity = authClient.getIdentity();
     // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
     const agent = new HttpAgent({ identity });
-    const actor = createActor('bkyz2-fmaaa-aaaaa-qaaaq-cai', {
+    const actor = createActor(process.env.DFX_BACKEND_ID, {
       agent,
     });
     // Using the interface description of our webapp, we create an actor that we use to call the service methods.
@@ -66,6 +69,8 @@ function App() {
       queryNfts
       </div>
       <br />
+      <p>API URL: {apiUrl}</p>
+      <p>Secret Key: {secretKey}</p>
       <br />
       <form action="#" onSubmit={handleSubmit}>
         <label htmlFor="name">new Enter your name: &nbsp;</label>

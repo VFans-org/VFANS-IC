@@ -37,6 +37,16 @@
     font-weight: 400;
     line-height: normal;
 }
+.image-btn-link{
+    color: #FFF;
+
+    text-align: center;
+    font-family: "PingFang SC";
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: normal;
+}
 
 .content {
     margin-top: 6px;
@@ -119,8 +129,7 @@
     line-height: 22px;
 }
 
-.block {
-    margin-top: 40px;
+.block { 
     padding: 16px 21px 7px 19px;
     height: 100px;
     border: 1px dashed #B2B1B2;

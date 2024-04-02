@@ -11,8 +11,8 @@ import queryString from 'query-string';
 import './index.css';
 
 function Page() {
-    let navigate = useNavigate()
-    let localtion = useLocation()
+    const navigate = useNavigate()
+    const localtion = useLocation()
     const params = queryString.parse(location.search); 
 
     const onCreateTest = () => {
@@ -29,7 +29,7 @@ function Page() {
         // start the login process and wait for it to finish
         await new Promise((resolve) => {
             authClient.login({
-                identityProvider: 'https://identity.ic0.app/',
+                identityProvider: process.env.DFX_URL,
                 onSuccess: resolve,
             });
         });
@@ -38,7 +38,7 @@ function Page() {
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
         const agent = new HttpAgent({ identity });
-        const actor = createActor('bkyz2-fmaaa-aaaaa-qaaaq-cai', {
+        const actor = createActor(c, {
             agent,
         });
         // Using the interface description of our webapp, we create an actor that we use to call the service methods.
@@ -60,7 +60,7 @@ function Page() {
         <div className='page-getid'>
             <NavBar
                 back={<ArrowLeft color="rgba(0, 0, 0, 0.85)" />}
-                onBackClick={() => router.back()}
+                onBackClick={() =>  navigate(-1)}
             ></NavBar>
             <div className='content'>
                 <div className='block-box'>
@@ -77,7 +77,7 @@ function Page() {
                     </div>
                 </div>
                 <div className='link-box'>
-                    <Link className='link' to='http://www.baidu.com'>
+                    <Link className='link' to={process.env.DFX_SHOW_TUTO}>
                         <span className='link'>点击查看创建教程</span>
                     </Link>
 
