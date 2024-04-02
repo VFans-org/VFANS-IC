@@ -87,7 +87,7 @@ function Page() {
                 backgroundImage: `url(${imgfadian})`
             }} className='image-bg'>
                 <div className='image-btn'>
-                    <Link to='https://mtest.vfans.org/my-vft/more-vft'>
+                    <Link to={process.env.DFX_MORE_VFT}>
                         <span className='image-btn-link'>获取更多</span>
                     </Link>
                 </div>

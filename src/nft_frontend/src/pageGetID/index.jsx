@@ -38,7 +38,7 @@ function Page() {
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
         const agent = new HttpAgent({ identity });
-        const actor = createActor(process.env.DFX_BACKEND_ID, {
+        const actor = createActor(c, {
             agent,
         });
         // Using the interface description of our webapp, we create an actor that we use to call the service methods.
@@ -77,7 +77,7 @@ function Page() {
                     </div>
                 </div>
                 <div className='link-box'>
-                    <Link className='link' to='https://mtest.vfans.org/my-vft/show-tutorial'>
+                    <Link className='link' to={process.env.DFX_SHOW_TUTO}>
                         <span className='link'>点击查看创建教程</span>
                     </Link>
 
