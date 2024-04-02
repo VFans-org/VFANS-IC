@@ -32,10 +32,11 @@ export const idlFactory = ({ IDL }) => {
     'getErrorLog' : IDL.Func([], [IDL.Text], ['query']),
     'getSubNft2' : IDL.Func([], [IDL.Nat], ['query']),
     'getUpdate' : IDL.Func([IDL.Nat], [IDL.Text], ['query']),
-    'greet' : IDL.Func([IDL.Text], [IDL.Text], ['query']),
     'make_test' : IDL.Func([], [], []),
     'mintICRC7' : IDL.Func([VFTParams], [IDL.Text], []),
     'queryNfts' : IDL.Func([IDL.Text], [IDL.Text], ['query']),
+    'query_balance' : IDL.Func([], [IDL.Nat], ['query']),
+    'query_cycles_ledger' : IDL.Func([], [IDL.Text], ['query']),
     'query_one_time' : IDL.Func([], [IDL.Text], []),
     'switch_timer' : IDL.Func([IDL.Bool], [], ['query']),
     'transform' : IDL.Func(

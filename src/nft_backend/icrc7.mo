@@ -16,6 +16,7 @@ import Iter "mo:base/Iter";
 import Time "mo:base/Time";
 import Int "mo:base/Int";
 import HttpTypes "HttpTypes";
+import Sha256 "SHA256";
 import Cycles "mo:base/ExperimentalCycles";
 import Json "json";
 import { setTimer; recurringTimer; cancelTimer } = "mo:base/Timer";
@@ -25,8 +26,8 @@ import IC "mo:base/ExperimentalInternetComputer";
 shared actor class ICRC7NFT(custodian : Principal) = Self {
 
   var timerId : Nat = 1;
-  var fiveSecond = 5;
-  var fithSecond = 5;
+  // var fiveSecond = 5;
+  var fiftySecond = 50;
   let daySeconds = 24 * 60 * 60;
   var stop_flag = false;
   var timeLock = false;
@@ -36,8 +37,13 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     error_msg : Text;
     error_type : Text;
   };
+  type CyclesBalance = {
+    create_time : Int;
+    balance : Nat;
+  };
 
   stable var error_list = List.nil<ErrorLog>();
+  stable var cycles_ledger = List.nil<CyclesBalance>();
 
   stable var update_list = List.nil<Text>();
   type ListType = List.List<Types.Nft>;
@@ -74,7 +80,6 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     // transferable : Text;
     // mint_time : Text;
   };
-
   public func query_one_time() : async Text {
     try {
       //构建body
@@ -205,7 +210,10 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     if (Text.size(list) == 0) {
       return "";
     };
-    return "{\"ic_account_id_list\":\"" # list # "\"}"
+    let signStr = list # "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1";
+    let sign = Sha256.sha256_with_text(signStr);
+
+    return "{\"ic_account_id_list\":\"" # list # "\"" # "\"ic_account_id_list\":\"" #debug_show (sign) # "\"}"
 
   };
 
@@ -257,17 +265,21 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
         let sbt_card_number = getText(nft.meta[0].key_val_data[7].val);
         let ic_account_id = getText(nft.meta[0].key_val_data[8].val);
         let reputation_point = getText(nft.meta[0].key_val_data[9].val);
+        let mint_time = getText(nft.meta[0].key_val_data[11].val);
         var result : Text = "";
-
         result := Json.addJson(null, "sbt_card_image", sbt_card_image);
         result := Json.addJson(?result, "sbt_membership_category", sbt_membership_category);
         result := Json.addJson(?result, "sbt_get_time", sbt_get_time);
-        result := Json.addJson(?result, "vft_count", vft_count);
         result := Json.addJson(?result, "vft_update_time", vft_update_time);
+        result := Json.addJson(?result, "vft_count", vft_count);
         result := Json.addJson(?result, "sbt_card_number", sbt_card_number);
         result := Json.addJson(?result, "ic_account_id", ic_account_id);
         result := Json.addJson(?result, "reputation_point", reputation_point);
         result := Json.addJson(?result, "owner", nft.owner);
+        result := Json.addJson(?result, "vfans_account_id", "6d5a62871fb1c8b7944a9ba4b64e58304f831e2cea975c9c66b9968a64026c1e");
+        result := Json.addJson(?result, "nft_type", "ICRC7");
+        result := Json.addJson(?result, "location", "Internet Computer");
+        result := Json.addJson(?result, "mint_time", mint_time);
         return Json.toJsonStr(result);
       };
     };
@@ -286,13 +298,6 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
       };
     };
   };
-
-  
-  public query func greet(name : Text) : async Text {
-    return "Hello, " # name # "!";
-  };
-
-
 
   public shared func clean() : async () {
     nfts := List.nil<Types.Nft>();
@@ -356,7 +361,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
 
     let url = "https://api-dev.vfans.org/user/sbt-info";
     let host = "api-dev.vfans.org";
-    Cycles.add(230_850_258_000);
+    Cycles.add<system>(230_850_258_000);
     let ic : HttpTypes.IC = actor ("aaaaa-aa");
     let http_response : HttpTypes.HttpResponsePayload = await ic.http_request(get_http_req(body, url, host));
     let response_body : Blob = Blob.fromArray(http_response.body);
@@ -422,7 +427,15 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     transformed;
   };
 
-  //==========定时任务
+  //==========查询账簿======================================================================
+  public query func query_cycles_ledger() : async Text {
+    return debug_show (cycles_ledger);
+  };
+  public query func query_balance() : async Nat {
+    return Cycles.balance();
+  };
+
+  //==========定时任务======================================================================
   private func outCall() : async () {
     let start = Time.now();
     if (stop_flag) {
@@ -452,17 +465,22 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
 
   // 重启定时服务
   private func resetQuery() : async () {
+    let balance = Cycles.balance();
+    let aaa : CyclesBalance = {
+      create_time = Time.now();
+      balance = balance;
+    };
+    cycles_ledger := List.push(aaa, cycles_ledger);
     Debug.print("重新启动定时服务");
     stop_flag := false;
-    timerId := recurringTimer(#seconds fithSecond, outCall);
+    timerId := recurringTimer<system>(#seconds fiftySecond, outCall);
   };
 
-  // timerId := recurringTimer(#seconds fithSecond, outCall);
-  // let a : Nat = recurringTimer(#seconds daySeconds, resetQuery);
+  timerId := recurringTimer<system>(#seconds fiftySecond, outCall);
+  let a : Nat = recurringTimer<system>(#seconds daySeconds, resetQuery);
 
   // =========================test======================================================================
   public shared func make_test() : async () {
-
     for (i in Iter.range(1, 10000)) {
       let param : VFTParams = {
         sbt_card_image = "1";
@@ -477,7 +495,5 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
       };
       let a = await mintICRC7(param);
     };
-
   };
-
 };
