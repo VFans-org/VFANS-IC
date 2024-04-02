@@ -38,7 +38,7 @@ function Page() {
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
         const agent = new HttpAgent({ identity });
-        const actor = createActor(c, {
+        const actor = createActor(process.env.DFX_BACKEND_ID, {
             agent,
         });
         // Using the interface description of our webapp, we create an actor that we use to call the service methods.

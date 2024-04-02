@@ -33,15 +33,21 @@ function Page() {
         value: 'vft_update_time'
     }]
 
-    // useEffect(() => {
-    //     const params = queryString.parse(location.search);
-
-    //     nft_backend.queryNfts(params.id).then((data) => {
-    //         console.log(data, '------')
-    //         setPageData(JSON.parse(data));
-    //     });
-
-    // }, [])
+    const ctime = (t) => {
+        const date = new Date(t / 1000000);
+        const Y = date.getFullYear() + '-';
+            const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-';
+            const D = date.getDate() + ' ';
+            const h = date.getHours() + ':';
+            const m = date.getMinutes() + ':';
+            const s = date.getSeconds();
+        if(t){ 
+            return Y  + M  + D + h + m + s;
+        }else{
+            return '';
+        }
+        
+    }
 
     useEffect(() => {
         (async () => {
@@ -74,11 +80,16 @@ function Page() {
             console.log(id)
             nft_backend.queryNfts(id).then((data) => {
                 console.log(data, '------')
-                setPageData(JSON.parse(data));
+                const d = JSON.parse(data);
+                d.vft_update_time = ctime(d.vft_update_time);
+                d.mint_time = ctime(d.mint_time);
+                setPageData(d);
             });
 
         })()
     }, [])
+
+
 
 
     return (
