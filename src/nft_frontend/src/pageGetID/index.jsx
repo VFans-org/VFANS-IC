@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate, useLocation,useHistory } from 'react-router-dom'
 import { nft_backend, createActor } from 'declarations/nft_backend';
 import { AuthClient } from "@dfinity/auth-client"
 import { HttpAgent } from "@dfinity/agent";
@@ -11,8 +11,9 @@ import queryString from 'query-string';
 import './index.css';
 
 function Page() {
-    let navigate = useNavigate()
-    let localtion = useLocation()
+    const navigate = useNavigate()
+    const localtion = useLocation()
+    const history = useHistory();
     const params = queryString.parse(location.search); 
 
     const onCreateTest = () => {
@@ -38,7 +39,7 @@ function Page() {
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
         const agent = new HttpAgent({ identity });
-        const actor = createActor('bkyz2-fmaaa-aaaaa-qaaaq-cai', {
+        const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
             agent,
         });
         // Using the interface description of our webapp, we create an actor that we use to call the service methods.
@@ -60,7 +61,7 @@ function Page() {
         <div className='page-getid'>
             <NavBar
                 back={<ArrowLeft color="rgba(0, 0, 0, 0.85)" />}
-                onBackClick={() => router.back()}
+                onBackClick={() =>  history.goBack()}
             ></NavBar>
             <div className='content'>
                 <div className='block-box'>
@@ -77,7 +78,7 @@ function Page() {
                     </div>
                 </div>
                 <div className='link-box'>
-                    <Link className='link' to='http://www.baidu.com'>
+                    <Link className='link' to='https://mtest.vfans.org/my-vft/show-tutorial'>
                         <span className='link'>点击查看创建教程</span>
                     </Link>
 

@@ -30,7 +30,7 @@ function App() {
     const identity = authClient.getIdentity();
     // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
     const agent = new HttpAgent({ identity });
-    const actor = createActor('bkyz2-fmaaa-aaaaa-qaaaq-cai', {
+    const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
       agent,
     });
     // Using the interface description of our webapp, we create an actor that we use to call the service methods.

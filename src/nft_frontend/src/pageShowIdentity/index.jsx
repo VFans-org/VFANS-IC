@@ -18,13 +18,13 @@ function Page() {
 
     const data = [{
         key: '合约类型',
-        value: 'sbt_membership_category'
+        value: 'nft_type'
     }, {
         key: '铸造时间',
-        value: 'sbt_get_time'
+        value: 'mint_time'
     }, {
         key: '公链（Layer1/2）',
-        value: 'sbt_card_number'
+        value: 'location'
     }, {
         key: 'VFT数量更新时间',
         value: 'vft_update_time'
@@ -47,14 +47,16 @@ function Page() {
             <div style={{
                 backgroundImage: `url(${imgfadian})`
             }} className='image-bg'>
-                <div className='image-btn'>
-                    获取更多
+                <div className='image-btn'> 
+                    <Link to='https://mtest.vfans.org/my-vft/more-vft'>
+                        <span className='image-btn-link'>获取更多</span>
+                    </Link>
                 </div>
             </div>
             <div className='content'>
                 <div className='input-label'>社区身份地址：</div>
                 <div className='input-box'>
-                    <div className='input-txt'>{pageData.ic_account_id || '铸造中，请稍后查看'}</div>
+                    <div className='input-txt'>{pageData.vfans_account_id || '铸造中，请稍后查看'}</div>
                     <div style={{
                         backgroundImage: `url(${vector})`
                     }} className='vector' onClick={handleCopyClick}></div>
