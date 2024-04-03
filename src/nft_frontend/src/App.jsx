@@ -8,7 +8,7 @@ function App() {
   const { isAuthenticated, identity } = useAuth();
   return (
     <>
-    <h1>V 1.0.0</h1>
+    <h1>V 1.0.1</h1>
       <header id="header">
         <section id="status" className="toast hidden">
           <span id="content"></span>
