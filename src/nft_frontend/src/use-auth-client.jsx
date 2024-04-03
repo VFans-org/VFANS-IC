@@ -19,10 +19,7 @@ const defaultOptions = {
    * @type {import("@dfinity/auth-client").AuthClientLoginOptions}
    */
   loginOptions: {
-    identityProvider:
-      process.env.DFX_NETWORK === "ic"
-        ? "https://identity.ic0.app/#authorize"
-        : `http://br5f7-7uaaa-aaaaa-qaaca-cai.localhost:4943/`,
+    identityProvider:"https://identity.ic0.app/#authorize",
   },
 };
 
@@ -68,7 +65,7 @@ export const useAuthClient = (options = defaultOptions) => {
 
     setAuthClient(client);
 
-    const actor = createActor(process.env.DFX_BACKEND_ID, {
+    const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
       agentOptions: {
         identity,
       },

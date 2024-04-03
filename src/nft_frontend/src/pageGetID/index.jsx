@@ -29,7 +29,7 @@ function Page() {
         // start the login process and wait for it to finish
         await new Promise((resolve) => {
             authClient.login({
-                identityProvider: process.env.DFX_URL,
+                identityProvider: 'https://identity.ic0.app',
                 onSuccess: resolve,
             });
         });
@@ -38,7 +38,7 @@ function Page() {
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
         const agent = new HttpAgent({ identity });
-        const actor = createActor(process.env.DFX_BACKEND_ID, {
+        const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
             agent,
         });
         // Using the interface description of our webapp, we create an actor that we use to call the service methods.
