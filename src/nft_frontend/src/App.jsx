@@ -8,7 +8,7 @@ function App() {
   const { isAuthenticated, identity } = useAuth();
   return (
     <>
-    <h1>V 1.0.1</h1>
+
       <header id="header">
         <section id="status" className="toast hidden">
           <span id="content"></span>
@@ -30,6 +30,7 @@ function App() {
         </section>
       </header>
       <main id="pageContent">
+        <h1>V 1.0.1</h1>
         {isAuthenticated ? <LoggedIn /> : <LoggedOut />}
       </main>
     </>
