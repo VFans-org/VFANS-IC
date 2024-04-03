@@ -1,85 +1,42 @@
-import { useState } from 'react';
-import { Link, useNavigate, useLocation, useParams } from 'react-router-dom'
-import { nft_backend, createActor } from 'declarations/nft_backend';
-import { AuthClient } from "@dfinity/auth-client"
-import { HttpAgent } from "@dfinity/agent";
-import { AccountIdentifier } from "@dfinity/ledger-icp";
+import React from "react";
+import LoggedOut from "./LoggedOut";
+import { useAuth, AuthProvider } from "./use-auth-client";
+import "./assets/main.css";
+import LoggedIn from "./LoggedIn";
 
 function App() {
-  console.log('aaa',process.env.DFX_NETWORK)
-  const apiUrl = process.env.API_URL;
-  const secretKey = process.env.API_SECRET_KEY;
-  const [greeting, setGreeting] = useState('');
-  let navigate = useNavigate()
-  // /* 手写实现获取到url中？后的参数信息 */
-  let localtion = useLocation()
-  let params = useParams()
-
-
-  async function handleSubmit(event) {
-    event.preventDefault();
-
-    // create an auth client
-    let authClient = await AuthClient.create();
-    // start the login process and wait for it to finish
-    await new Promise((resolve) => {
-      authClient.login({
-        identityProvider: process.env.DFX_URL,
-        onSuccess: resolve,
-      });
-    });
-
-    // At this point we're authenticated, and we can get the identity from the auth client:
-    const identity = authClient.getIdentity();
-    // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
-    const agent = new HttpAgent({ identity });
-    const actor = createActor(process.env.DFX_BACKEND_ID, {
-      agent,
-    });
-    // Using the interface description of our webapp, we create an actor that we use to call the service methods.
-    const principal = await actor.whoami();
-    const textDecoder = new TextDecoder();
-    const accountIdentifier = AccountIdentifier.fromPrincipal({ principal: principal })
-    alert(accountIdentifier.toHex());
-
-    const name = event.target.elements.name.value;
-    nft_backend.greet(name).then((greeting) => {
-      setGreeting(greeting);
-    });
-
-    console.log(localtion, params, "--------------");
-    // 页面跳转方法
-    // navigate('/tab1');
-    return false;
-
-  }
-  //queryNfts
-
-  const onQueryNfts = () => {
-    nft_backend.queryNfts('f6d30373bf6a2ec170019a71c001891e8aaa43039fbb92c3ace42d4bfece3997').then((data) => {
-     console.log(data)
-    });
-  }
-
- 
-
+  const { isAuthenticated, identity } = useAuth();
   return (
-    <main>
-      <div onClick={onQueryNfts}>
-      queryNfts
-      </div>
-      <br />
-      <p>API URL: {apiUrl}</p>
-      <p>Secret Key: {secretKey}</p>
-      <br />
-      <form action="#" onSubmit={handleSubmit}>
-        <label htmlFor="name">new Enter your name: &nbsp;</label>
-        <input id="name" alt="Name" type="text" />
-        <button type="submit">Click Me!</button>
-      </form>
-      <section id="greeting">{greeting}</section>
-    </main>
+    <>
+      <header id="header">
+        <section id="status" className="toast hidden">
+          <span id="content"></span>
+          <button className="close-button" type="button">
+            <svg
+              aria-hidden="true"
+              className="w-5 h-5"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                fillRule="evenodd"
+                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              ></path>
+            </svg>
+          </button>
+        </section>
+      </header>
+      <main id="pageContent">
+        {isAuthenticated ? <LoggedIn /> : <LoggedOut />}
+      </main>
+    </>
   );
 }
 
-export default App;
+export default () => (
+  <AuthProvider>
+    <App />
+  </AuthProvider>
+);

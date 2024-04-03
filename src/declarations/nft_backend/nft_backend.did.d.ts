@@ -27,6 +27,7 @@ export interface ICRC7NFT {
   'query_cycles_ledger' : ActorMethod<[], string>,
   'query_one_time' : ActorMethod<[], string>,
   'switch_timer' : ActorMethod<[boolean], undefined>,
+  'test_query_one_time' : ActorMethod<[], string>,
   'transform' : ActorMethod<[TransformArgs], CanisterHttpResponsePayload>,
   'whoami' : ActorMethod<[], Principal>,
 }
