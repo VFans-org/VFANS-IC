@@ -32,6 +32,7 @@ export const idlFactory = ({ IDL }) => {
     'getErrorLog' : IDL.Func([], [IDL.Text], ['query']),
     'getSubNft2' : IDL.Func([], [IDL.Nat], ['query']),
     'getUpdate' : IDL.Func([IDL.Nat], [IDL.Text], ['query']),
+    'get_version' : IDL.Func([], [IDL.Text], []),
     'make_test' : IDL.Func([], [], []),
     'mintICRC7' : IDL.Func([VFTParams], [IDL.Text], []),
     'queryNfts' : IDL.Func([IDL.Text], [IDL.Text], ['query']),

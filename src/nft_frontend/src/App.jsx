@@ -8,7 +8,6 @@ function App() {
   const { isAuthenticated, identity } = useAuth();
   return (
     <>
-
       <header id="header">
         <section id="status" className="toast hidden">
           <span id="content"></span>
@@ -30,7 +29,16 @@ function App() {
         </section>
       </header>
       <main id="pageContent">
-        <h1>V 1.0.1</h1>
+        <h1>V 1.0.2</h1>
+        <div id="title">
+          <div>env:</div>
+          <ul>DFX_URL:{process.env.DFX_URL}</ul>
+          <ul>DFX_BACKEND_ID:{process.env.DFX_BACKEND_ID}</ul>
+          <ul>DFX_SHOW_TUTO:{process.env.DFX_SHOW_TUTO}</ul>
+          <ul>DFX_MORE_VFT:{process.env.DFX_MORE_VFT}</ul>
+          <ul>DFX_NETWORK:{process.env.DFX_NETWORK}</ul>
+        </div>
+        
         {isAuthenticated ? <LoggedIn /> : <LoggedOut />}
       </main>
     </>

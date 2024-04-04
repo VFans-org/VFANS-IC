@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Image, Toast } from '@nutui/nutui-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { ArrowLeft } from '@nutui/icons-react'
+import { NavBar } from '@nutui/nutui-react'
 import imgfadian from './assets/fadian.png';
 import imgkongtou from './assets/kongtou.png';
 import imgleidian from './assets/leidian.png';
@@ -17,6 +19,7 @@ import './index.css';
 
 function Page() {
 
+    const navigate = useNavigate()
     const [pageData, setPageData] = useState({});
 
     const data = [{
@@ -93,7 +96,11 @@ function Page() {
 
 
     return (
-        <div className='container'>
+        <div className='show-container'>
+             <NavBar
+                back={<ArrowLeft color="rgba(0, 0, 0, 0.85)" />}
+                onBackClick={() =>  navigate(-1)}
+            ></NavBar>
             <div style={{
                 backgroundImage: `url(${imgfadian})`
             }} className='image-bg'>

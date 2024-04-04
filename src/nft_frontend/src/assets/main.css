@@ -29,6 +29,8 @@ html,
 body {
   margin: 0;
   width: 100vw;
+  display: flex;
+  justify-content: center;
 }
 
 p {
@@ -423,4 +425,8 @@ header {
 }
 .hidden * {
   display: none;
+}
+
+#title{
+  font-size: 14px;
 }

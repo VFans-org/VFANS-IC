@@ -1,23 +1,29 @@
 .page-getid {
-    .content {
-        .block-box {
-            margin: 8px 20px 0 20px;
+    width: 100%;
+    width: 334px;
+    padding-top: 10px;
+    display: flex;
+    flex-direction: column;
+
+    .getid-content {
+        margin-top: 10px;
+        .getid-block-box {
+            padding: 9px 19px;
             display: flex;
-            justify-content: center; 
+            justify-content: center;
 
             flex-shrink: 0;
             border-radius: 4px;
             background: #F1E8FC;
 
-            .block {
-                width: 334px;
+            .getid-block {
                 height: 136px;
                 display: flex;
                 justify-content: center;
 
                 flex-direction: column;
 
-                .block-title {
+                .getid-block-title {
                     color: rgba(0, 0, 0, 0.85);
 
                     font-family: "PingFang SC";
@@ -27,7 +33,7 @@
                     line-height: 24px;
                 }
 
-                .block-txt {
+                .getid-block-txt {
                     color: rgba(0, 0, 0, 0.85);
                     font-family: "PingFang SC";
                     font-size: 12px;
