@@ -104,10 +104,6 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     };
     "处理成功";
   };
-
-  public func get_version() : async Text {
-         return "1.0.0";
-  };
   public func test_query_one_time() : async Text {
     try {
       //构建body
@@ -333,6 +329,9 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
         return "未知类型";
       };
     };
+  };
+  public func get_version() : async Text {
+    return "1.0.0";
   };
 
   public shared func clean() : async () {
