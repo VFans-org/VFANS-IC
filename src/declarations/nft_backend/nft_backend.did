@@ -23,6 +23,7 @@ type ICRC7NFT =
    getErrorLog: () -> (text) query;
    getSubNft2: () -> (nat) query;
    getUpdate: (nat) -> (text) query;
+   get_version: () -> (text);
    make_test: () -> ();
    mintICRC7: (VFTParams) -> (text);
    queryNfts: (text) -> (text) query;

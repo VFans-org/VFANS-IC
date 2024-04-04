@@ -62,16 +62,16 @@ function Page() {
                 back={<ArrowLeft color="rgba(0, 0, 0, 0.85)" />}
                 onBackClick={() =>  navigate(-1)}
             ></NavBar>
-            <div className='content'>
-                <div className='block-box'>
-                    <div className='block'>
-                        <div className='block-title'>
+            <div className='getid-content'>
+                <div className='getid-block-box'>
+                    <div className='getid-block'>
+                        <div className='getid-block-title'>
                             说明：
                         </div>
-                        <div className='block-txt'>
+                        <div className='getid-block-txt'>
                             1、该链上ID来源于 Internet Identity，更多链开发中，敬请期待
                         </div>
-                        <div className='block-txt'>
+                        <div className='getid-block-txt'>
                             2、链上ID成功获取后，将进入NFT自动铸造流程，稍后可重新进入页面查看
                         </div>
                     </div>

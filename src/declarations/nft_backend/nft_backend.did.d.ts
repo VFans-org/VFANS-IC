@@ -20,6 +20,7 @@ export interface ICRC7NFT {
   'getErrorLog' : ActorMethod<[], string>,
   'getSubNft2' : ActorMethod<[], bigint>,
   'getUpdate' : ActorMethod<[bigint], string>,
+  'get_version' : ActorMethod<[], string>,
   'make_test' : ActorMethod<[], undefined>,
   'mintICRC7' : ActorMethod<[VFTParams], string>,
   'queryNfts' : ActorMethod<[string], string>,
