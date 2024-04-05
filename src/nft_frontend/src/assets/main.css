@@ -25,6 +25,10 @@
   box-sizing: border-box;
 }
 
+:root {
+  --nutui-navbar-background: #fff;
+}
+
 html,
 body {
   margin: 0;
@@ -64,6 +68,7 @@ input {
 input.errored {
   border: double 2px var(--flamingo-500);
 }
+
 input.errored::placeholder {
   color: var(--flamingo-500);
 }
@@ -73,6 +78,7 @@ h1 {
   font-size: 1.8rem;
   margin: auto;
 }
+
 @media (min-width: 1024px) {
   h1 {
     margin: inherit;
@@ -342,6 +348,7 @@ header {
   --tw-text-opacity: 1;
   color: white;
 }
+
 .toast span {
   font-family: inherit;
   color: inherit;
@@ -423,10 +430,31 @@ header {
   display: none;
   visibility: hidden;
 }
+
 .hidden * {
   display: none;
 }
 
-#title{
+#title {
   font-size: 14px;
+}
+
+:global(.nut-navbar) {
+  height: 44px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+
+  background: none;
+}
+
+.nut-navbar {
+  height: 44px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+
+  background: none;
 }

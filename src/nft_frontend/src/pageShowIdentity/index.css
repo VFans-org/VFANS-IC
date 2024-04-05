@@ -1,6 +1,25 @@
+.show-container :global(.nut-navbar) {
+    height: 44px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: none;
+}
+
+.show-container :global(.nut-navbar-title) {
+    font-family: PingFang SC;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 22px;
+    letter-spacing: 0em;
+    text-align: left;
+    color: #fff;
+}
+
 .show-container {
     width: 100%;
-    width: 334px ;
+    width: 334px;
     padding-top: 10px;
     display: flex;
     flex-direction: column;
@@ -38,7 +57,8 @@
     font-weight: 400;
     line-height: normal;
 }
-.image-btn-link{
+
+.image-btn-link {
     color: #FFF;
 
     text-align: center;
@@ -130,7 +150,7 @@
     line-height: 22px;
 }
 
-.block { 
+.block {
     margin-top: 40px;
     padding: 16px 21px 7px 19px;
     height: 100px;

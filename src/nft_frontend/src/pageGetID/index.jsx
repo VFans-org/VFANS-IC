@@ -1,24 +1,40 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { nft_backend, createActor } from 'declarations/nft_backend';
 import { AuthClient } from "@dfinity/auth-client"
 import { HttpAgent } from "@dfinity/agent";
 import { AccountIdentifier } from "@dfinity/ledger-icp";
-import { NavBar } from '@nutui/nutui-react'
+import { NavBar, Loading, Overlay } from '@nutui/nutui-react'
 import { ArrowLeft } from '@nutui/icons-react'
 import queryString from 'query-string';
+import CryptoJS from 'crypto-js';
+import '@nutui/nutui-react/dist/style.css'
 
 import './index.css';
 
 function Page() {
     const navigate = useNavigate()
     const localtion = useLocation()
-    const params = queryString.parse(location.search); 
+    const params = queryString.parse(location.search);
+    const [suid, setSuid] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    // const [error, setError] = useState(null);
+
+    const encryptData = (data, secretKey) => {
+        const encryptedData = CryptoJS.AES.encrypt(data, secretKey).toString();
+        return encryptedData;
+    }
+
+    const decryptData = (encryptedData, secretKey) => {
+        const bytes = CryptoJS.AES.decrypt(encryptedData, secretKey);
+        const originalData = bytes.toString(CryptoJS.enc.Utf8);
+        return originalData;
+    }
 
     const onCreateTest = () => {
         console.log(params, 'aa')
         params.id = 'aaa';
-        console.log(queryString.stringify(params),'bb',localtion);
+        console.log(queryString.stringify(params), 'bb', localtion);
     }
 
     async function onCreate(event) {
@@ -33,7 +49,7 @@ function Page() {
                 onSuccess: resolve,
             });
         });
-
+        setIsLoading(true);
         // At this point we're authenticated, and we can get the identity from the auth client:
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
@@ -49,18 +65,49 @@ function Page() {
         console.log(accountIdentifier.toHex());
 
         params.id = accountIdentifier.toHex();
-        console.log(queryString.stringify(params),'bb');
-        // 页面跳转方法
-        navigate('/pageShowIdentity?'+queryString.stringify(params));
-        return false;
+        console.log(queryString.stringify(params), 'bb');
 
+        console.log(suid, accountIdentifier.toHex(), 'ids');
+
+        nft_backend.binding_vfans(suid, accountIdentifier.toHex())
+            .then((data) => {
+                console.log(data, 'binding_vfans------')
+                setIsLoading(false);
+                // 页面跳转
+                navigate('/pageShowIdentity?' + queryString.stringify(params));
+            });
+        return false;
     }
+
+    useEffect(() => {
+        const encryptedData = params.u;
+        console.log('encryptedData', encryptedData)
+        const secretKey = 'vfansvfans';
+        const decryptedData = decryptData(encryptedData, secretKey);
+        console.log('decryptedData', decryptedData)
+        setSuid(decryptedData);
+    }, []);
+
+
+    const WrapperStyle = {
+        display: 'flex',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center'
+    }
+
 
     return (
         <div className='page-getid'>
+
+            <Overlay visible={isLoading}>
+                <div className="wrapper" style={WrapperStyle}>
+                    <Loading direction="vertical">加载中</Loading>
+                </div>
+            </Overlay>
             <NavBar
                 back={<ArrowLeft color="rgba(0, 0, 0, 0.85)" />}
-                onBackClick={() =>  navigate(-1)}
+                onBackClick={() => navigate(-1)}
             ></NavBar>
             <div className='getid-content'>
                 <div className='getid-block-box'>
@@ -89,6 +136,7 @@ function Page() {
                     <span onClick={onCreateTest} className='btn'>测试</span>
                 </div> */}
             </div>
+
         </div>
     );
 }

@@ -19,7 +19,7 @@ const defaultOptions = {
    * @type {import("@dfinity/auth-client").AuthClientLoginOptions}
    */
   loginOptions: {
-    identityProvider:"https://identity.ic0.app/#authorize",
+    identityProvider:"https://identity.ic0.app",
   },
 };
 

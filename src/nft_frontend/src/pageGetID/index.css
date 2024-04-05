@@ -1,3 +1,23 @@
+.page-getid :global(.nut-navbar) {
+    height: 44px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+
+    background: none;
+}
+
+.page-getid :global(.nut-navbar-title) {
+    font-family: PingFang SC;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 22px;
+    letter-spacing: 0em;
+    text-align: left;
+    color: #fff;
+}
+
 .page-getid {
     width: 100%;
     width: 334px;
@@ -7,6 +27,7 @@
 
     .getid-content {
         margin-top: 10px;
+
         .getid-block-box {
             padding: 9px 19px;
             display: flex;
