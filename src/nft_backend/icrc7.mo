@@ -246,7 +246,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     let body = user_id # "," #ic_account_id # "," #op;
     let signStr = body # "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1";
     let sign = Sha256.sha256_with_text(signStr);
-    return "{\"user_id\":\"" # user_id # "\"" # ",\"ic_account_id\":\"" # ic_account_id # ",\"op\":\"" # op # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}";
+    return "{\"user_id\":\"" # user_id # "\"" # ",\"ic_account_id\":\"" # ic_account_id # "\",\"op\":\"" # op # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}";
   };
   func build_query_body() : Text {
     //{
