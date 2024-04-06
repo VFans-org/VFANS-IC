@@ -467,10 +467,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     result;
   };
 
-  public func test_post() : async Text {
-
-    let url = "https://api-dev.vfans.org/user/sbt-info";
-    let host = "api-dev.vfans.org";
+  public func test_post(url:Text,host:Texl) : async Text {
     Cycles.add<system>(230_850_258_000);
     let ic : HttpTypes.IC = actor ("aaaaa-aa");
     let http_response : HttpTypes.HttpResponsePayload = await ic.http_request(get_http_req("test", url, host));
