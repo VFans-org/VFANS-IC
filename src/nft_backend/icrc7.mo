@@ -242,11 +242,11 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     };
   };
 
-  func build_binding_body(user_id : Text, ic_account_id : Text) : Text {
-    let body = user_id # "," #ic_account_id;
+  func build_binding_body(user_id : Text, ic_account_id : Text, op : Text) : Text {
+    let body = user_id # "," #ic_account_id # "," #op;
     let signStr = body # "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1";
     let sign = Sha256.sha256_with_text(signStr);
-    return "{\"user_id\":\"" # user_id # "\"" # ",\"ic_account_id\":\"" # ic_account_id # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}";
+    return "{\"user_id\":\"" # user_id # "\"" # ",\"ic_account_id\":\"" # ic_account_id # ",\"op\":\"" # op # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}";
   };
   func build_query_body() : Text {
     //{
@@ -367,7 +367,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
   public shared func binding_vfans(user_id : Text, ic_account_id : Text) : async Text {
     try {
       //构建body
-      let body = build_binding_body(user_id, ic_account_id);
+      let body = build_binding_body(user_id, ic_account_id, "bind");
       Debug.print(debug_show ("请求内容" #body));
       //发送http 请求
       let https_resp = await do_send_post(body, "icAccount");
@@ -383,6 +383,11 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
         error_type = "绑定出错";
       };
       error_list := List.push(aaa, error_list);
+      let body = build_binding_body(user_id, ic_account_id, "unbind");
+      Debug.print(debug_show ("请求内容" #body));
+      //发送http 请求
+      let https_resp = await do_send_post(body, "icAccount");
+      Debug.print(debug_show ("返回结果" #https_resp));
       return "处理失败";
     };
     "处理成功";
