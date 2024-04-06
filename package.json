@@ -4,7 +4,7 @@
     "npm": ">=7.0.0"
   },
   "name": "ic_demo",
-  "scripts": { 
+  "scripts": {
     "build": "npm run build --workspaces --if-present",
     "prebuild": "npm run prebuild --workspaces --if-present",
     "pretest": "npm run prebuild --workspaces --if-present",
@@ -24,6 +24,7 @@
     "assert": "2.0.0",
     "buffer": "6.0.3",
     "copy-webpack-plugin": "^11.0.0",
+    "crypto-js": "^4.2.0",
     "dotenv": "^16.0.3",
     "events": "3.3.0",
     "html-webpack-plugin": "5.5.0",
