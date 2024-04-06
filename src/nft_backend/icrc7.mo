@@ -467,7 +467,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     result;
   };
 
-  public func test_post(url:Text,host:Texl) : async Text {
+  public func test_post(url:Text,host:Text) : async Text {
     Cycles.add<system>(230_850_258_000);
     let ic : HttpTypes.IC = actor ("aaaaa-aa");
     let http_response : HttpTypes.HttpResponsePayload = await ic.http_request(get_http_req("test", url, host));
