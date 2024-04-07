@@ -154,7 +154,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     let split_array = Text.split(resp, #char ';');
     let status_code = Option.get(split_array.next(), "0");
     if (status_code != "200") {
-      return "resp";
+      return resp;
     };
     for (message in split_array) {
       let message_line = Iter.toArray(Text.split(message, #char ','));
