@@ -84,8 +84,12 @@ function Page() {
             nft_backend.queryNfts(id).then((data) => {
                 console.log(data, '------')
                 const d = JSON.parse(data);
-                d.vft_update_time = ctime(d.vft_update_time);
-                d.mint_time = ctime(d.mint_time);
+                if(d.vft_update_time){
+                    d.vft_update_time = ctime(d.vft_update_time);
+                }
+                if(d.mint_time){
+                    d.mint_time = ctime(d.mint_time);
+                }
                 setPageData(d);
             });
 
