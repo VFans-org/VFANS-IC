@@ -404,6 +404,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
   //绑定并铸币
   public shared func binding_vfans(user_id : Text, ic_account_id : Text) : async Text {
     try {
+      Debug.print("接收请求user_id=" #user_id # ",ic_account_id" #ic_account_id);
       //构建body
       let body = build_binding_body(user_id, ic_account_id, "bind");
       Debug.print(debug_show ("请求内容" #body));
