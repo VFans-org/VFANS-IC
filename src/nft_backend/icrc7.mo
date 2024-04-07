@@ -91,7 +91,10 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
       let https_resp = await do_send_post(body, "sbt-info");
       // Debug.print(debug_show ("返回结果" #https_resp));
       //处理返回结果
-      deal_https_resp(https_resp, "update");
+      let result = deal_https_resp(https_resp, "update");
+      if (result != "处理成功") {
+        return result;
+      };
     } catch e {
       let err_msg : Text = show_error(e);
       let aaa : ErrorLog = {
@@ -147,11 +150,11 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     return debug_show (update_list);
   };
 
-  func deal_https_resp(resp : Text, op : Text) : () {
+  func deal_https_resp(resp : Text, op : Text) : Text {
     let split_array = Text.split(resp, #char ';');
     let status_code = Option.get(split_array.next(), "0");
     if (status_code != "200") {
-      return;
+      return "查询出错";
     };
     for (message in split_array) {
       let message_line = Iter.toArray(Text.split(message, #char ','));
@@ -240,6 +243,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
         };
       };
     };
+    return "处理成功";
   };
 
   func build_binding_body(user_id : Text, ic_account_id : Text, op : Text) : Text {
@@ -342,39 +346,39 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     };
   };
   public query func queryNfts2(index : Nat) : async Text {
-      let nft = List.get(nfts,index);
-      switch (nft) {
-        case (null) {
-          "-1";
-        };
-        case (?nft) {
-          let sbt_card_image = getText(nft.meta[0].key_val_data[0].val);
-          let sbt_membership_category = getText(nft.meta[0].key_val_data[1].val);
-          let sbt_get_time = getText(nft.meta[0].key_val_data[2].val);
-          let vft_count = getText(nft.meta[0].key_val_data[3].val);
-          let vft_update_time = getText(nft.meta[0].key_val_data[5].val);
-          let sbt_card_number = getText(nft.meta[0].key_val_data[7].val);
-          let ic_account_id = getText(nft.meta[0].key_val_data[8].val);
-          let reputation_point = getText(nft.meta[0].key_val_data[9].val);
-          let mint_time = getText(nft.meta[0].key_val_data[11].val);
-          var result : Text = "";
-          result := Json.addJson(null, "sbt_card_image", sbt_card_image);
-          result := Json.addJson(?result, "sbt_membership_category", sbt_membership_category);
-          result := Json.addJson(?result, "sbt_get_time", sbt_get_time);
-          result := Json.addJson(?result, "vft_update_time", vft_update_time);
-          result := Json.addJson(?result, "vft_count", vft_count);
-          result := Json.addJson(?result, "sbt_card_number", sbt_card_number);
-          result := Json.addJson(?result, "ic_account_id", ic_account_id);
-          result := Json.addJson(?result, "reputation_point", reputation_point);
-          result := Json.addJson(?result, "owner", nft.owner);
-          result := Json.addJson(?result, "vfans_account_id", "6d5a62871fb1c8b7944a9ba4b64e58304f831e2cea975c9c66b9968a64026c1e");
-          result := Json.addJson(?result, "nft_type", "ICRC7");
-          result := Json.addJson(?result, "location", "Internet Computer");
-          result := Json.addJson(?result, "mint_time", mint_time);
-          return Json.toJsonStr(result);
-        };
+    let nft = List.get(nfts, index);
+    switch (nft) {
+      case (null) {
+        "-1";
+      };
+      case (?nft) {
+        let sbt_card_image = getText(nft.meta[0].key_val_data[0].val);
+        let sbt_membership_category = getText(nft.meta[0].key_val_data[1].val);
+        let sbt_get_time = getText(nft.meta[0].key_val_data[2].val);
+        let vft_count = getText(nft.meta[0].key_val_data[3].val);
+        let vft_update_time = getText(nft.meta[0].key_val_data[5].val);
+        let sbt_card_number = getText(nft.meta[0].key_val_data[7].val);
+        let ic_account_id = getText(nft.meta[0].key_val_data[8].val);
+        let reputation_point = getText(nft.meta[0].key_val_data[9].val);
+        let mint_time = getText(nft.meta[0].key_val_data[11].val);
+        var result : Text = "";
+        result := Json.addJson(null, "sbt_card_image", sbt_card_image);
+        result := Json.addJson(?result, "sbt_membership_category", sbt_membership_category);
+        result := Json.addJson(?result, "sbt_get_time", sbt_get_time);
+        result := Json.addJson(?result, "vft_update_time", vft_update_time);
+        result := Json.addJson(?result, "vft_count", vft_count);
+        result := Json.addJson(?result, "sbt_card_number", sbt_card_number);
+        result := Json.addJson(?result, "ic_account_id", ic_account_id);
+        result := Json.addJson(?result, "reputation_point", reputation_point);
+        result := Json.addJson(?result, "owner", nft.owner);
+        result := Json.addJson(?result, "vfans_account_id", "6d5a62871fb1c8b7944a9ba4b64e58304f831e2cea975c9c66b9968a64026c1e");
+        result := Json.addJson(?result, "nft_type", "ICRC7");
+        result := Json.addJson(?result, "location", "Internet Computer");
+        result := Json.addJson(?result, "mint_time", mint_time);
+        return Json.toJsonStr(result);
       };
     };
+  };
 
   func getText(input : Types.MetadataVal) : Text {
     switch (input) {
@@ -407,7 +411,10 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
       let https_resp = await do_send_post(body, "icAccount");
       Debug.print(debug_show ("返回结果" #https_resp));
       //处理返回结果
-      deal_https_resp(https_resp, "binding");
+      let result = deal_https_resp(https_resp, "binding");
+      if (result != "处理成功") {
+        return result;
+      };
     } catch e {
       Debug.print(show_error(e));
       let err_msg : Text = show_error(e);
@@ -501,7 +508,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     result;
   };
 
-  public func test_post(url:Text,host:Text) : async Text {
+  public func test_post(url : Text, host : Text) : async Text {
     Cycles.add<system>(230_850_258_000);
     let ic : HttpTypes.IC = actor ("aaaaa-aa");
     let http_response : HttpTypes.HttpResponsePayload = await ic.http_request(get_http_req("test", url, host));
@@ -510,7 +517,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
       case (null) { "No value returned" };
       case (?y) { y };
     };
-    
+
     //6. RETURN RESPONSE OF THE BODY
     // let result : Text = decoded_text # ". See more info of the request sent at: " # url # "/inspect";
     let result : Text = decoded_text;
