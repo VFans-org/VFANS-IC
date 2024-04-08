@@ -394,7 +394,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     };
   };
   public func get_version() : async Text {
-    return "1.0.3";
+    return "1.0.4";
   };
 
   public shared func clean() : async () {
