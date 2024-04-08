@@ -25,9 +25,11 @@ export const idlFactory = ({ IDL }) => {
     'make_test' : IDL.Func([], [], []),
     'nft_count' : IDL.Func([], [IDL.Nat], ['query']),
     'queryNfts' : IDL.Func([IDL.Text], [IDL.Text], ['query']),
+    'queryNfts2' : IDL.Func([IDL.Nat], [IDL.Text], ['query']),
     'query_balance' : IDL.Func([], [IDL.Nat], ['query']),
     'query_cycles_ledger' : IDL.Func([], [IDL.Text], ['query']),
     'query_one_time' : IDL.Func([], [IDL.Text], []),
+    'test_post' : IDL.Func([IDL.Text, IDL.Text], [IDL.Text], []),
     'test_query_one_time' : IDL.Func([], [IDL.Text], []),
     'transform' : IDL.Func(
         [TransformArgs],

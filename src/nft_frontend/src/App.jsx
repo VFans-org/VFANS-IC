@@ -1,7 +1,7 @@
 import React from "react";
 import LoggedOut from "./LoggedOut";
 import { useAuth, AuthProvider } from "./use-auth-client";
-import "./assets/main.css";
+// import "./assets/main.css";
 import LoggedIn from "./LoggedIn";
 
 function App() {

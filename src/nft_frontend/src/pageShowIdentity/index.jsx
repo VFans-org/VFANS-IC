@@ -39,17 +39,29 @@ function Page() {
     const ctime = (t) => {
         const date = new Date(t / 1000000);
         const Y = date.getFullYear() + '-';
-            const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-';
-            const D = date.getDate() + ' ';
-            const h = date.getHours() + ':';
-            const m = date.getMinutes() + ':';
-            const s = date.getSeconds();
-        if(t){ 
-            return Y  + M  + D + h + m + s;
-        }else{
+        const M = (date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1) + '-';
+        const D = date.getDate() + ' ';
+        const h = date.getHours() + ':';
+        const m = date.getMinutes() + ':';
+        const s = date.getSeconds();
+        if (t) {
+            return Y + M + D + h + m + s;
+        } else {
             return '';
         }
-        
+
+    }
+
+    const handleCopyClick = () => {
+        try {
+            if (pageData.vfans_account_id) copy(pageData.vfans_account_id)
+            Toast.show('已复制到剪贴板')
+        } catch {
+            Toast.show({
+                content: '复制失败',
+                icon: 'fail',
+            })
+        }
     }
 
     useEffect(() => {
@@ -62,7 +74,7 @@ function Page() {
                 // start the login process and wait for it to finish
                 await new Promise((resolve) => {
                     authClient.login({
-                        identityProvider: 'https://identity.ic0.app',
+                        identityProvider: 'http://bkyz2-fmaaa-aaaaa-qaaaq-cai.localhost:4943/',
                         onSuccess: resolve,
                     });
                 });
@@ -71,7 +83,7 @@ function Page() {
                 const identity = authClient.getIdentity();
                 // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
                 const agent = new HttpAgent({ identity });
-                const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
+                const actor = createActor('bd3sg-teaaa-aaaaa-qaaba-cai', {
                     agent,
                 });
                 // Using the interface description of our webapp, we create an actor that we use to call the service methods.
@@ -84,8 +96,12 @@ function Page() {
             nft_backend.queryNfts(id).then((data) => {
                 console.log(data, '------')
                 const d = JSON.parse(data);
-                d.vft_update_time = ctime(d.vft_update_time);
-                d.mint_time = ctime(d.mint_time);
+                if (d.vft_update_time) {
+                    d.vft_update_time = ctime(d.vft_update_time);
+                }
+                if (d.mint_time) {
+                    d.mint_time = ctime(d.mint_time);
+                }
                 setPageData(d);
             });
 
@@ -97,9 +113,9 @@ function Page() {
 
     return (
         <div className='show-container'>
-             <NavBar
+            <NavBar
                 back={<ArrowLeft color="rgba(0, 0, 0, 0.85)" />}
-                onBackClick={() =>  navigate(-1)}
+                onBackClick={() => navigate(-1)}
             ></NavBar>
             <div style={{
                 backgroundImage: `url(${imgfadian})`
@@ -114,9 +130,9 @@ function Page() {
                 <div className='input-label'>社区身份地址：</div>
                 <div className='input-box'>
                     <div className='input-txt'>{pageData.vfans_account_id || '铸造中，请稍后查看'}</div>
-                    {/* <div style={{
+                    <div onClick={handleCopyClick} style={{
                         backgroundImage: `url(${vector})`
-                    }} className='vector'  ></div> */}
+                    }} className='vector'  ></div>
                 </div>
                 <div className='row-box'>
                     {

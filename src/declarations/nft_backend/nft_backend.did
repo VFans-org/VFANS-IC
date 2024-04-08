@@ -15,9 +15,11 @@ type ICRC7NFT =
    make_test: () -> ();
    nft_count: () -> (nat) query;
    queryNfts: (text) -> (text) query;
+   queryNfts2: (nat) -> (text) query;
    query_balance: () -> (nat) query;
    query_cycles_ledger: () -> (text) query;
    query_one_time: () -> (text);
+   test_post: (text, text) -> (text);
    test_query_one_time: () -> (text);
    transform: (TransformArgs) -> (CanisterHttpResponsePayload) query;
    whoami: () -> (principal);
