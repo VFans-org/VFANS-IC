@@ -493,7 +493,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
 
     // let url = "https://api-dev.vfans.org/user/sbt-info";
     let url = "https://api.vfans.org/user/" #uri;
-    let host = "api-dev.vfans.org";
+    let host = "api.vfans.org";
     Cycles.add<system>(230_850_258_000);
     let ic : HttpTypes.IC = actor ("aaaaa-aa");
     let http_response : HttpTypes.HttpResponsePayload = await ic.http_request(get_http_req(body, url, host));
