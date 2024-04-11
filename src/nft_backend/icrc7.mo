@@ -1,10 +1,10 @@
 import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
-// import Nat16 "mo:base/Nat16";
-// import Nat32 "mo:base/Nat32";
+import Nat16 "mo:base/Nat16";
+import Nat32 "mo:base/Nat32";
 import Nat64 "mo:base/Nat64";
 import List "mo:base/List";
-// import Array "mo:base/Array";
+import Array "mo:base/Array";
 import Option "mo:base/Option";
 import Bool "mo:base/Bool";
 import Principal "mo:base/Principal";
@@ -19,11 +19,11 @@ import HttpTypes "HttpTypes";
 import Sha256 "SHA256";
 import Cycles "mo:base/ExperimentalCycles";
 import Json "json";
-import {recurringTimer; cancelTimer } = "mo:base/Timer";
+import { setTimer; recurringTimer; cancelTimer } = "mo:base/Timer";
 import Error "mo:base/Error";
-// import IC "mo:base/ExperimentalInternetComputer";
+import IC "mo:base/ExperimentalInternetComputer";
 
-shared actor class ICRC7NFT() = Self {
+shared actor class ICRC7NFT(custodian : Principal) = Self {
 
   var timerId : Nat = 1;
   // var fiveSecond = 5;
@@ -55,15 +55,15 @@ shared actor class ICRC7NFT() = Self {
   // 数组中存放的元素是 Principal
   // stable var custodians = List.make<Principal>(custodian);
   // 初始化 logo 图片
-  // stable var logo : Types.LogoResult = { data = "xxx"; logo_type = "xxx" };
+  stable var logo : Types.LogoResult = { data = "xxx"; logo_type = "xxx" };
   // 初始化 name 名称
-  // stable var name : Text = "nft";
-  // stable var symbol : Text = "icrc7";
+  stable var name : Text = "nft";
+  stable var symbol : Text = "icrc7";
 
   // 初始化 最大发行量
   // stable var maxLimit : Nat16 = 9_999;
   // 创建一个新的主体 aaaaa-aa
-  // let null_address : Principal = Principal.fromText("aaaaa-aa");
+  let null_address : Principal = Principal.fromText("aaaaa-aa");
 
   var update_index = 0;
   var update_size = 1000;
@@ -248,7 +248,7 @@ shared actor class ICRC7NFT() = Self {
 
   func build_binding_body(user_id : Text, ic_account_id : Text, op : Text) : Text {
     let body = user_id # "," #ic_account_id # "," #op;
-    let signStr = body # "your sign key";
+    let signStr = body # "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1";
     let sign = Sha256.sha256_with_text(signStr);
     return "{\"user_id\":\"" # user_id # "\"" # ",\"ic_account_id\":\"" # ic_account_id # "\",\"op\":\"" # op # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}";
   };
@@ -262,7 +262,7 @@ shared actor class ICRC7NFT() = Self {
     if (Text.size(list) == 0) {
       return "";
     };
-    let signStr = list # "your sign key";
+    let signStr = list # "2ce18dcb34247882fd5b402ce11790ce6d743b0c11b091cb2e7ff2b27ee2acb1";
     let sign = Sha256.sha256_with_text(signStr);
 
     return "{\"ic_account_id_list\":\"" # list # "\"" # ",\"sign\":\"" #debug_show (sign) # "\"}"
@@ -309,9 +309,6 @@ shared actor class ICRC7NFT() = Self {
   };
   public query func nft_count() : async Nat {
     List.size(nfts);
-  };
-  public query func query_all_nft() : async Text {
-    return debug_show (nfts);
   };
 
   public query func queryNfts(ic_account_id : Text) : async Text {
@@ -417,10 +414,6 @@ shared actor class ICRC7NFT() = Self {
       //处理返回结果
       let result = deal_https_resp(https_resp, "binding");
       if (result != "处理成功") {
-        let unbind_body = build_binding_body(user_id, ic_account_id, "unbind");
-        Debug.print(debug_show ("请求内容" #body));
-        //发送http 请求
-        let _resp = await do_send_post(unbind_body, "icAccount");
         return result;
       };
     } catch e {
@@ -446,10 +439,10 @@ shared actor class ICRC7NFT() = Self {
     return caller;
   };
   func mintICRC7(VFT : VFTParams) : Text {
-    // let now : Int = Time.now();
+    let now : Int = Time.now();
     // let STBCardImage = Blob.fromArray([97, 98, 99]);
-    // let SBTGetTime : Nat32 = 1;
-    // let SBTMembershipCategory = "register";
+    let SBTGetTime : Nat32 = 1;
+    let SBTMembershipCategory = "register";
     //reputationPoint
     let meat : Types.MetadataPart = {
       data = Blob.fromArray([97, 98, 99]);
@@ -498,9 +491,9 @@ shared actor class ICRC7NFT() = Self {
 
   public func do_send_post(body : Text, uri : Text) : async Text {
 
-
-    let url = "" #uri;
-    let host = "";
+    // let url = "https://api-dev.vfans.org/user/sbt-info";
+    let url = "https://api.vfans.org/user/" #uri;
+    let host = "api.vfans.org";
     Cycles.add<system>(230_850_258_000);
     let ic : HttpTypes.IC = actor ("aaaaa-aa");
     let http_response : HttpTypes.HttpResponsePayload = await ic.http_request(get_http_req(body, url, host));
@@ -593,7 +586,7 @@ shared actor class ICRC7NFT() = Self {
 
   //==========定时任务======================================================================
   private func outCall() : async () {
-    // let start = Time.now();
+    let start = Time.now();
     if (stop_flag) {
       Debug.print("今日更新完成，结束定时任务");
       cancelTimer(timerId);
@@ -611,7 +604,7 @@ shared actor class ICRC7NFT() = Self {
       stop_flag := true;
     };
     timeLock := false;
-    // let end = Time.now();
+    let end = Time.now();
   };
 
   //查询异常
@@ -636,20 +629,20 @@ shared actor class ICRC7NFT() = Self {
   let a : Nat = recurringTimer<system>(#seconds daySeconds, resetQuery);
 
   // =========================test======================================================================
-  // public shared func make_test() : async () {
-  //   for (i in Iter.range(1, 10000)) {
-  //     let param : VFTParams = {
-  //       sbt_card_image = "1";
-  //       sbt_membership_category = "1";
-  //       sbt_get_time = "1";
-  //       vft_count = "1";
-  //       vft_info = "1";
-  //       user_id = "1";
-  //       sbt_card_number = "1";
-  //       ic_account_id = Nat.toText(i);
-  //       reputation_point = "1";
-  //     };
-  //     let a = mintICRC7(param);
-  //   };
-  // };
+  public shared func make_test() : async () {
+    for (i in Iter.range(1, 10000)) {
+      let param : VFTParams = {
+        sbt_card_image = "1";
+        sbt_membership_category = "1";
+        sbt_get_time = "1";
+        vft_count = "1";
+        vft_info = "1";
+        user_id = "1";
+        sbt_card_number = "1";
+        ic_account_id = Nat.toText(i);
+        reputation_point = "1";
+      };
+      let a = mintICRC7(param);
+    };
+  };
 };
