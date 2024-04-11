@@ -19,7 +19,7 @@ const defaultOptions = {
    * @type {import("@dfinity/auth-client").AuthClientLoginOptions}
    */
   loginOptions: {
-    identityProvider:"https://identity.ic0.app",
+    identityProvider:"http://bkyz2-fmaaa-aaaaa-qaaaq-cai.localhost:4943/",
   },
 };
 
@@ -65,7 +65,7 @@ export const useAuthClient = (options = defaultOptions) => {
 
     setAuthClient(client);
 
-    const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
+    const actor = createActor('bd3sg-teaaa-aaaaa-qaaba-cai', {
       agentOptions: {
         identity,
       },

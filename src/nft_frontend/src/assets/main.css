@@ -1,6 +1,6 @@
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap");
+/* @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap"); */
 
-:root {
+/* :root {
   font-family: "Montserrat", sans-serif;
   font-size: 16px;
   --flamingo-500: #f15a24;
@@ -27,9 +27,9 @@
 
 :root {
   --nutui-navbar-background: #fff;
-}
+} */
 
-html,
+/* html,
 body {
   margin: 0;
   width: 100vw;
@@ -433,28 +433,20 @@ header {
 
 .hidden * {
   display: none;
+} */
+
+:root {
+  --nutui-navbar-background: #fff;
+  --nutui-navbar-margin-bottom:0;
+}
+
+a {
+  text-decoration: none;
+}
+.nut-navbar-left, .nut-navbar-right {
+  padding: 0 !important;;
 }
 
 #title {
   font-size: 14px;
-}
-
-:global(.nut-navbar) {
-  height: 44px;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-
-  background: none;
-}
-
-.nut-navbar {
-  height: 44px;
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-
-  background: none;
 }

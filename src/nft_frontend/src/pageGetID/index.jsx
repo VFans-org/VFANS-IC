@@ -45,7 +45,7 @@ function Page() {
         // start the login process and wait for it to finish
         await new Promise((resolve) => {
             authClient.login({
-                identityProvider: 'https://identity.ic0.app',
+                identityProvider: 'http://bkyz2-fmaaa-aaaaa-qaaaq-cai.localhost:4943/',
                 onSuccess: resolve,
             });
         });
@@ -54,7 +54,7 @@ function Page() {
         const identity = authClient.getIdentity();
         // Using the identity obtained from the auth client, we can create an agent to interact with the IC.
         const agent = new HttpAgent({ identity });
-        const actor = createActor('zfeoc-xaaaa-aaaal-ai4nq-cai', {
+        const actor = createActor('bd3sg-teaaa-aaaaa-qaaba-cai', {
             agent,
         });
         // Using the interface description of our webapp, we create an actor that we use to call the service methods.
@@ -81,11 +81,14 @@ function Page() {
 
     useEffect(() => {
         const encryptedData = params.u;
-        console.log('encryptedData', encryptedData)
-        const secretKey = 'vfansvfans';
-        const decryptedData = decryptData(encryptedData, secretKey);
-        console.log('decryptedData', decryptedData)
-        setSuid(decryptedData);
+        if(encryptedData && encryptedData!=''){
+            console.log('encryptedData', encryptedData)
+            const secretKey = 'vfansvfans';
+            const decryptedData = decryptData(encryptedData, secretKey);
+            console.log('decryptedData', decryptedData)
+            setSuid(decryptedData);
+        }
+        
     }, []);
 
 
