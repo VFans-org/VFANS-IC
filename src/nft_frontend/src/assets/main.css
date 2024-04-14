@@ -1,6 +1,6 @@
-/* @import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap"); */
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap");
 
-/* :root {
+:root {
   font-family: "Montserrat", sans-serif;
   font-size: 16px;
   --flamingo-500: #f15a24;
@@ -15,7 +15,7 @@
   --grey-800: #3f4043;
   --grey-900: #292a2e;
 
-  --text-color: var(--grey-900);
+
   --background-color: #fff;
   --primary: black;
   --secondary: #cdcdcd;
@@ -27,9 +27,9 @@
 
 :root {
   --nutui-navbar-background: #fff;
-} */
+} 
 
-/* html,
+html,
 body {
   margin: 0;
   width: 100vw;
@@ -280,7 +280,7 @@ header {
   justify-content: center;
 }
 
-.toast {
+/* .toast {
   -webkit-text-size-adjust: 100%;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
     Helvetica Neue, Arial, Noto Sans, sans-serif, Apple Color Emoji,
@@ -352,7 +352,7 @@ header {
 .toast span {
   font-family: inherit;
   color: inherit;
-}
+} */
 
 .close-button {
   -webkit-text-size-adjust: 100%;
@@ -433,8 +433,9 @@ header {
 
 .hidden * {
   display: none;
-} */
+}
 
+ 
 :root {
   --nutui-navbar-background: #fff;
   --nutui-navbar-margin-bottom:0;
