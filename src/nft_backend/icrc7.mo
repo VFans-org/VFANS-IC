@@ -23,7 +23,7 @@ import { setTimer; recurringTimer; cancelTimer } = "mo:base/Timer";
 import Error "mo:base/Error";
 import IC "mo:base/ExperimentalInternetComputer";
 
-shared actor class ICRC7NFT(custodian : Principal) = Self {
+shared actor class ICRC7NFT(custodian : Principal, env : Text) = Self {
 
   var timerId : Nat = 1;
   // var fiveSecond = 5;
@@ -111,7 +111,7 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
     try {
       //构建body
       let body = test_build_query_body();
-      Debug.print("AAAAAAAAA--------" # body);
+      Debug.print("--------" # body);
       //发送http 请求
       let https_resp = await do_send_post(body, "sbt-info");
       return https_resp;
@@ -492,8 +492,13 @@ shared actor class ICRC7NFT(custodian : Principal) = Self {
   public func do_send_post(body : Text, uri : Text) : async Text {
 
     // let url = "https://api-dev.vfans.org/user/sbt-info";
-    let url = "https://api.vfans.org/user/" #uri;
-    let host = "api.vfans.org";
+    var url = "https://api.vfans.org/user/" #uri;
+    var host = "api.vfans.org";
+    if (env == "test") {
+      url := "https://api-dev.vfans.org/user/" #uri;
+      host := "api-dev.vfans.org";
+    };
+
     Cycles.add<system>(230_850_258_000);
     let ic : HttpTypes.IC = actor ("aaaaa-aa");
     let http_response : HttpTypes.HttpResponsePayload = await ic.http_request(get_http_req(body, url, host));
