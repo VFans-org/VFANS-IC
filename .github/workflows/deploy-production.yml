@@ -1,0 +1,65 @@
+name: 手动部署
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Prepare
+        run: |
+          # Install dfx.
+          echo '执行1'
+          DFXVM_INIT_YES=true sh -ci "$(curl -fsSL https://sdk.dfinity.org/install.sh)"
+          echo '执行1.5'
+          export PATH=$HOME/bin:$PATH
+          export PATH="$HOME/.local/share/dfx/bin:$PATH"
+          source ~/.bashrc
+          echo '执行2'
+          dfx --version
+          echo '执行3'
+          echo "$HOME/.local/share/dfx/bin" >> $GITHUB_PATH
+          echo '执行4'
+          source "$HOME/.local/share/dfx/env"
+          echo '执行5'
+          dfx cache install
+          
+          # Prepare identity.
+          echo "${{secrets.IC_PRI_KEY}}" > identity.pem
+          chmod 400 identity.pem
+          mkdir -p ~/.config/dfx/identity/default
+          mv identity.pem ~/.config/dfx/identity/default/identity.pem
+          dfx identity list
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+      - name: Build
+        run: |
+          npm install
+      #          cd ..
+      - name: Deploy
+        run: |
+          echo '执行6'
+          echo '{"nft_backend":{"ic":"${{ vars.TEST_NFT_BACKEND_CANISTER_ID }}"},"nft_frontend":{"ic":"${{ vars.TEST_NFT_FRONTEND_CANISTER_ID}}"}}' > canister_ids.json
+          dfx start --background --clean
+          echo '执行7'
+          dfx canister create nft_backend
+          echo '执行7.0'
+          dfx build nft_backend
+          echo '执行7.1'
+          dfx generate nft_backend
+          echo '执行8'
+          dfx deploy
+          echo '执行9'
+          dfx deploy --network=ic
+          echo '执行10'
+          rm canister_ids.json
+      - name: Summarize
+        run: |
+          echo '后端地址 https://a4gq6-oaaaa-aaaab-qaa4q-cai.raw.icp0.io/?id=${{ vars.TEST_NFT_BACKEND_CANISTER_ID }}' >> $GITHUB_STEP_SUMMARY
+          echo '前端地址 https://${{ vars.TEST_NFT_FRONTEND_CANISTER_ID }}.icp0.io' >> $GITHUB_STEP_SUMMARY
