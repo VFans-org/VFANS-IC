@@ -14,6 +14,10 @@
       "type": "assets",
       "workspace": "nft_frontend"
     },
+    "vfans_ledger": {
+      "main": "src/vfans_ledger/main.mo",
+      "type": "motoko"
+    },
     "internet_identity": {
       "type": "custom",
       "candid": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity.did",

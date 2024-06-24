@@ -22,8 +22,14 @@ import Json "json";
 import { setTimer; recurringTimer; cancelTimer } = "mo:base/Timer";
 import Error "mo:base/Error";
 import IC "mo:base/ExperimentalInternetComputer";
+import Result "mo:base/Result";
+import icp_ledger_canister "../lib/icp_ledger_canister";
 
-shared actor class ICRC7NFT(custodian : Principal, env : Text) = Self {
+shared actor class ICRC7NFT(env : Text) = Self {
+
+  type icp_ledger_canister_ = icp_ledger_canister.Self;
+
+  let icp_ledger_canister_holder : icp_ledger_canister_ = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai");
 
   var timerId : Nat = 1;
   // var fiveSecond = 5;
@@ -40,6 +46,25 @@ shared actor class ICRC7NFT(custodian : Principal, env : Text) = Self {
   type CyclesBalance = {
     create_time : Int;
     balance : Nat;
+  };
+  type blob = Blob;
+  type principal = Principal;
+  type nat = Nat;
+  type nat64 = Nat64;
+
+  type Account = {
+    owner : principal;
+    subaccount : ?blob;
+  };
+  public type ApproveArgs = {
+    fee : ?Nat;
+    memo : ?Blob;
+    from_subaccount : ?Blob;
+    created_at_time : ?Nat64;
+    amount : Nat;
+    expected_allowance : ?Nat;
+    expires_at : ?Nat64;
+    spender : Account;
   };
 
   stable var error_list = List.nil<ErrorLog>();
@@ -80,6 +105,38 @@ shared actor class ICRC7NFT(custodian : Principal, env : Text) = Self {
     // transferable : Text;
     // mint_time : Text;
   };
+
+  //授权
+  public shared ({ caller }) func approve(amount : Nat, principal : Text) : async Result.Result<Nat, Text> {
+    let args : ApproveArgs = {
+      fee = null;
+      memo = null;
+      from_subaccount = null;
+      created_at_time = null;
+      expected_allowance = null;
+      expires_at = null;
+      amount = amount;
+      spender = { owner = Principal.fromText(principal); subaccount = null };
+    };
+    try {
+      // initiate the transfer
+      let transferResult = await icp_ledger_canister_holder.icrc2_approve(args);
+
+      // check if the transfer was successfull
+      switch (transferResult) {
+        case (#Err(transferError)) {
+          return #err("Couldn't transfer funds:\n" # debug_show (transferError));
+        };
+        case (#Ok(blockIndex)) { return #ok blockIndex };
+      };
+
+    } catch (error : Error) {
+      // catch any errors that might occur during the transfer
+      return #err("Reject message: " # Error.message(error));
+    };
+    return #err("Couldn't transfer funds:\n 未知错误");
+  };
+
   public func query_one_time() : async Text {
     try {
       //构建body
