@@ -23,6 +23,7 @@ module Types {
         #get;
         #post;
         #head;
+        #put;
     };
 
     public type HttpResponsePayload = {

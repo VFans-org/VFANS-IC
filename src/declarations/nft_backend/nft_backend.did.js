@@ -1,15 +1,4 @@
 export const idlFactory = ({ IDL }) => {
-  const VFTParams = IDL.Record({
-    'sbt_get_time' : IDL.Text,
-    'sbt_membership_category' : IDL.Text,
-    'vft_count' : IDL.Text,
-    'reputation_point' : IDL.Text,
-    'vft_info' : IDL.Text,
-    'user_id' : IDL.Text,
-    'sbt_card_number' : IDL.Text,
-    'sbt_card_image' : IDL.Text,
-    'ic_account_id' : IDL.Text,
-  });
   const HttpHeader = IDL.Record({ 'value' : IDL.Text, 'name' : IDL.Text });
   const HttpResponsePayload = IDL.Record({
     'status' : IDL.Nat,
@@ -26,17 +15,22 @@ export const idlFactory = ({ IDL }) => {
     'headers' : IDL.Vec(HttpHeader),
   });
   const ICRC7NFT = IDL.Service({
+    'binding_vfans' : IDL.Func([IDL.Text, IDL.Text], [IDL.Text], []),
     'clean' : IDL.Func([], [], []),
     'deal_https_resp_test' : IDL.Func([IDL.Text, IDL.Text], [IDL.Text], []),
-    'do_send_post' : IDL.Func([IDL.Text], [IDL.Text], []),
+    'do_send_post' : IDL.Func([IDL.Text, IDL.Text], [IDL.Text], []),
     'getErrorLog' : IDL.Func([], [IDL.Text], ['query']),
-    'getSubNft2' : IDL.Func([], [IDL.Nat], ['query']),
     'getUpdate' : IDL.Func([IDL.Nat], [IDL.Text], ['query']),
+    'get_version' : IDL.Func([], [IDL.Text], []),
     'make_test' : IDL.Func([], [], []),
-    'mintICRC7' : IDL.Func([VFTParams], [IDL.Text], []),
+    'nft_count' : IDL.Func([], [IDL.Nat], ['query']),
     'queryNfts' : IDL.Func([IDL.Text], [IDL.Text], ['query']),
+    'queryNfts2' : IDL.Func([IDL.Nat], [IDL.Text], ['query']),
+    'query_balance' : IDL.Func([], [IDL.Nat], ['query']),
+    'query_cycles_ledger' : IDL.Func([], [IDL.Text], ['query']),
     'query_one_time' : IDL.Func([], [IDL.Text], []),
-    'switch_timer' : IDL.Func([IDL.Bool], [], ['query']),
+    'test_post' : IDL.Func([IDL.Text, IDL.Text], [IDL.Text], []),
+    'test_query_one_time' : IDL.Func([], [IDL.Text], []),
     'transform' : IDL.Func(
         [TransformArgs],
         [CanisterHttpResponsePayload],
