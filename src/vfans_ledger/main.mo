@@ -16,7 +16,7 @@ actor {
   type icp_rate_ = icp_rate.Self;
 
   let icp_ledger_canister_holder : icp_ledger_canister_ = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai");
-  let icp_rate_holder : icp_rate = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai");
+  let icp_rate_holder : icp_rate_ = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai");
 
   type blob = Blob;
   type principal = Principal;
@@ -81,7 +81,7 @@ actor {
 
     // Every XRC call needs 1B cycles.
     Cycles.add(1_000_000_000);
-    let response = await XRC.get_exchange_rate(request);
+    let response = await icp_rate_holder.get_exchange_rate(request);
     // Print out the response to get a detailed view.
     // return (debug_show (response));
     // Return 0.0 if there is an error for the sake of simplicity.
