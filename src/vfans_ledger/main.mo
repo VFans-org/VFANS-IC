@@ -9,11 +9,14 @@ import Text "mo:base/Text";
 import Nat64 "mo:base/Nat64";
 import Nat "mo:base/Nat";
 import icp_ledger_canister "../lib/icp_ledger_canister";
+import icp_rate "../lib/icp_rate";
 
 actor {
   type icp_ledger_canister_ = icp_ledger_canister.Self;
+  type icp_rate_ = icp_rate.Self;
 
   let icp_ledger_canister_holder : icp_ledger_canister_ = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai");
+  let icp_rate_holder : icp_rate = actor ("uf6dk-hyaaa-aaaaq-qaaaq-cai");
 
   type blob = Blob;
   type principal = Principal;
@@ -53,6 +56,45 @@ actor {
     expected_allowance : ?Nat;
     expires_at : ?Nat64;
     spender : Account;
+  };
+
+
+
+  //查询兑换比例
+ /// Extract the current exchange rate for the given symbol.
+  public func get_exchange_rate(time : Nat64, base : XRC.Asset, quote : XRC.Asset) : async Float {
+
+    let request : XRC.GetExchangeRateRequest = {
+      base_asset = base;
+      quote_asset = quote;
+      // base_asset = {
+      //   symbol = symbol;
+      //   class_ = #Cryptocurrency;
+      // };
+      // quote_asset = {
+      //   symbol = "ICP";
+      //   class_ = #FiatCurrency;
+      // };
+      // Get the current rate.
+      timestamp = ?time;
+    };
+
+    // Every XRC call needs 1B cycles.
+    Cycles.add(1_000_000_000);
+    let response = await XRC.get_exchange_rate(request);
+    // Print out the response to get a detailed view.
+    // return (debug_show (response));
+    // Return 0.0 if there is an error for the sake of simplicity.
+    switch (response) {
+      case (#Ok(rate_response)) {
+        let float_rate = Float.fromInt(Nat64.toNat(rate_response.rate));
+        let float_divisor = Float.fromInt(Nat32.toNat(10 ** rate_response.metadata.decimals));
+        return float_rate / float_divisor;
+      };
+      case _ {
+        return 0.0;
+      };
+    };
   };
 
   //查询ICP余额
