@@ -6,10 +6,13 @@ import Error "mo:base/Error";
 import Array "mo:base/Array";
 import Principal "mo:base/Principal";
 import Text "mo:base/Text";
+import Nat32 "mo:base/Nat32";
+import Float "mo:base/Float";
 import Nat64 "mo:base/Nat64";
 import Nat "mo:base/Nat";
 import icp_ledger_canister "../lib/icp_ledger_canister";
 import icp_rate "../lib/icp_rate";
+import Cycles "mo:base/ExperimentalCycles";
 
 actor {
   type icp_ledger_canister_ = icp_ledger_canister.Self;
@@ -62,9 +65,9 @@ actor {
 
   //查询兑换比例
  /// Extract the current exchange rate for the given symbol.
-  public func get_exchange_rate(time : Nat64, base : XRC.Asset, quote : XRC.Asset) : async Float {
+  public func get_exchange_rate(time : Nat64, base : icp_rate.Asset, quote : icp_rate.Asset) : async Float {
 
-    let request : XRC.GetExchangeRateRequest = {
+    let request : icp_rate.GetExchangeRateRequest = {
       base_asset = base;
       quote_asset = quote;
       // base_asset = {
