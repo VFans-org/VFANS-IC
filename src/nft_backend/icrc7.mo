@@ -496,8 +496,8 @@ shared actor class ICRC7NFT(env : Text) = Self {
     return caller;
   };
 
-  public shared ({ caller }) func getIcAccountId() : async Blob {
-    return Principal.toLedgerAccount(caller, null);
+  public shared ({ caller }) func getIcAccountId() : async ?Text {
+    return Text.decodeUtf8(Principal.toLedgerAccount(caller, null));
   };
 
   func mintICRC7(VFT : VFTParams) : Text {
