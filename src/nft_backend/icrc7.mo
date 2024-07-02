@@ -495,6 +495,11 @@ shared actor class ICRC7NFT(env : Text) = Self {
   public shared ({ caller }) func whoami() : async Principal {
     return caller;
   };
+
+  public shared ({ caller }) func getIcAccountId() : async Blob {
+    return Principal.toLedgerAccount(caller, null);
+  };
+
   func mintICRC7(VFT : VFTParams) : Text {
     let now : Int = Time.now();
     // let STBCardImage = Blob.fromArray([97, 98, 99]);
